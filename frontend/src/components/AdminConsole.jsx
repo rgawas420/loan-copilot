@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import AdminBilling from "./AdminBilling.jsx";
 import AdminPage from "./AdminPage.jsx";
@@ -244,6 +244,14 @@ function Activity({ user, onClear }) {
 export default function AdminConsole({ me, sidebarOpen, onOpenSidebar }) {
   const [tab, setTab] = useState("overview");
   const [activityUser, setActivityUser] = useState(null);
+  const nav = useRef(null);
+  useEffect(() => {                       // on a phone the tabs scroll sideways: keep the open one in view
+    const el = nav.current, on = el?.querySelector(".on");
+    if (!on || el.scrollWidth <= el.clientWidth) return;
+    const left = on.offsetLeft - el.offsetLeft, right = left + on.offsetWidth;
+    if (left < el.scrollLeft) el.scrollLeft = left - 8;
+    else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth + 8;
+  }, [tab]);
   return (
     <div className="chat-main admin-main">
       <header className="topbar">
@@ -254,7 +262,7 @@ export default function AdminConsole({ me, sidebarOpen, onOpenSidebar }) {
       </header>
       <div className="admin-scroll">
         <div className="admin-wrap">
-          <nav className="seg" aria-label="Admin sections">
+          <nav className="seg" aria-label="Admin sections" ref={nav}>
             {TABS.map((t) => (
               <button key={t.id} className={tab === t.id ? "on" : ""} aria-current={tab === t.id ? "page" : undefined}
                       onClick={() => setTab(t.id)}><Icon name={t.icon} size={16} />{t.label}</button>

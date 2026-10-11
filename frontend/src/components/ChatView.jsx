@@ -238,10 +238,12 @@ function Confidence({ c }) {
   const reasons = c.level === "high" ? [] : c.reasons || [];
   return (
     <div className={`confidence ${c.level}`} role="note">
-      <button type="button" className="confidence-head" aria-expanded={open} onClick={() => setOpen((x) => !x)}>
+      <button type="button" className="confidence-head" aria-expanded={reasons.length > 0 ? open : undefined}
+              onClick={() => setOpen((x) => !x)}>
         <Icon name={c.level === "high" ? "check" : "alert"} size={15} />
         <b>{label}</b>
         <span className="muted">{c.level === "high" ? lead : c.corrected ? "An unsupported statement was removed." : ""}</span>
+        {reasons.length > 0 && <span className="confidence-more">{open ? "Hide" : "Why?"}<Icon name="chevron" size={14} /></span>}
       </button>
       {open && reasons.length > 0 && (
         <div className="confidence-body">

@@ -81,6 +81,9 @@ export default function AuthScreen({ onAuthed }) {
   }
 
   function switchMode(m) { setMode(m); setError(""); }
+  // The error below the form describes the fields; focusing on load would open a phone's keyboard over the page.
+  const invalid = error ? { "aria-invalid": true, "aria-describedby": "auth-error" } : {};
+  const finePointer = window.matchMedia?.("(pointer: fine)").matches ?? true;
 
   return (
     <main className="auth">
@@ -98,20 +101,21 @@ export default function AuthScreen({ onAuthed }) {
           {register && (
             <label className="field">
               <span>Name</span>
-              <input type="text" autoComplete="name" required maxLength={80} value={form.name} onChange={set("name")} />
+              <input type="text" autoComplete="name" required maxLength={80} value={form.name} onChange={set("name")} {...invalid} />
             </label>
           )}
           <label className="field">
             <span>Email address</span>
-            <input type="email" autoComplete="email" required maxLength={200} value={form.email} onChange={set("email")} autoFocus />
+            <input type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} required maxLength={200}
+                   value={form.email} onChange={set("email")} autoFocus={finePointer} {...invalid} />
           </label>
           <label className="field">
             <span>Password</span>
             <input type="password" autoComplete={register ? "new-password" : "current-password"} required
-                   minLength={register ? 8 : undefined} maxLength={200} value={form.password} onChange={set("password")} />
+                   minLength={register ? 8 : undefined} maxLength={200} value={form.password} onChange={set("password")} {...invalid} />
           </label>
           {register && <p className="field-hint">At least 8 characters.</p>}
-          <p className="form-error" role="alert">{error}</p>
+          <p className="form-error" id="auth-error" role="alert">{error}</p>
           <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
             {busy ? "Please wait…" : register ? "Create account" : "Continue"}
           </button>

@@ -158,6 +158,7 @@ export default function Composer({ convKey, modes, defaultMode, question, busy, 
       <label htmlFor="composer-input" className="sr-only">{MODES[mode].label}</label>
       <textarea id="composer-input" ref={ref} rows={1} value={text} maxLength={2000}
                 placeholder={placeholder} inputMode={mode === "answer" ? inputModeFor(question?.kind) : "text"}
+                enterKeyHint="send"
                 onChange={(e) => setText(e.target.value)} onPaste={onPaste}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) submit(e); }} />
       <div className="composer-bar">
