@@ -107,6 +107,8 @@ h1,h2,h3,h4{line-height:1.3}
 
 /* ---------- app shell ---------- */
 .app{display:flex;height:100%;overflow:hidden}
+.main-slot{display:contents}
+.page-loading{margin:auto}
 .sidebar{width:260px;flex:none;display:flex;flex-direction:column;height:100%;background:var(--bg-side);padding:8px;position:relative;z-index:20}
 .side-top{display:flex;justify-content:space-between;padding:0 0 4px}
 .side-new,.side-link{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;border-radius:10px;background:transparent;font-weight:500;text-align:left}
@@ -175,6 +177,10 @@ h1,h2,h3,h4{line-height:1.3}
 .md-table table{border-collapse:collapse;font-size:.9rem}
 .md-table th,.md-table td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
 .md-table th{background:var(--surface)}
+/* Cells wrap between words only: with the answer's overflow-wrap:anywhere a wide table shrank to one letter per
+   column on phones. Now the table keeps readable columns and scrolls sideways inside its own box. */
+.md-table th,.md-table td{overflow-wrap:normal;word-break:normal;min-width:4.5em;max-width:22em}
+.md-table{-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
 .sources{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:10px;font-size:.8rem}
 .sources > span:first-child{color:var(--muted);font-weight:500;margin-right:2px}
 .source{padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -262,7 +268,7 @@ h1,h2,h3,h4{line-height:1.3}
 .source-card span{display:flex;flex-direction:column;min-width:0}
 .source-card b{font-size:.84rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .source-card small{font-size:.76rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.source-card .src-flags{display:flex;gap:6px}
+.source-card .src-flags{display:flex;flex-wrap:wrap;gap:2px 8px;white-space:normal;overflow:visible}
 .src-flags .warn{color:var(--warn);font-weight:600}
 .source-more{border:1px dashed var(--line);border-radius:12px;background:transparent;color:var(--muted);font-size:.84rem}
 .excerpt{margin:8px 0 14px;padding:12px 14px;border-left:3px solid var(--accent);background:var(--surface);border-radius:0 10px 10px 0;white-space:pre-wrap;font-size:.88rem;max-height:50vh;overflow-y:auto}
@@ -359,7 +365,6 @@ h1,h2,h3,h4{line-height:1.3}
 .b-not{background:var(--danger-soft);color:var(--danger)} .b-more{background:var(--info-soft);color:var(--info)}
 .summary{margin:.6em 0}
 .hint{color:var(--muted);font-size:.9rem;margin:.4em 0}
-.warn{padding:10px 14px;border-radius:10px;background:var(--warn-soft);color:var(--text);border-left:3px solid var(--warn);margin:12px 0}
 .facts{display:grid;grid-template-columns:max-content 1fr;gap:6px 18px;margin:14px 0;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r)}
 .facts dt{color:var(--muted);font-size:.9rem} .facts dd{margin:0;font-weight:500;overflow-wrap:anywhere}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;margin:16px 0}
@@ -590,6 +595,44 @@ h1,h2,h3,h4{line-height:1.3}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
+/* ---------- viewport, safe areas and touch ---------- */
+/* The dynamic viewport follows the mobile browser's toolbars (and, with interactive-widget=resizes-content in
+   index.html, the on-screen keyboard on Android), so the composer is never hidden behind them. */
+@supports (height:100dvh){.app,.auth{min-height:100dvh}.app{height:100dvh}}
+.topbar{height:auto;min-height:56px;padding:env(safe-area-inset-top,0px) max(12px,env(safe-area-inset-right,0px)) 0 max(12px,env(safe-area-inset-left,0px))}
+.sidebar{padding:max(8px,env(safe-area-inset-top,0px)) 8px max(8px,env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px))}
+.composer-wrap{padding-bottom:max(6px,env(safe-area-inset-bottom,0px))}
+.sheet{padding-bottom:env(safe-area-inset-bottom,0px)}
+.user-name > span:first-child{overflow:hidden;text-overflow:ellipsis}
+@media (max-width:640px){
+  /* the composer area stays compact so the conversation keeps most of a small phone's height */
+  .ready-bar{flex-wrap:nowrap;gap:10px;margin-bottom:8px;padding:6px 6px 6px 12px;font-size:.84rem;line-height:1.35}
+  .ready-bar .btn{flex:none}
+  .fineprint{margin:4px 0 0;font-size:.7rem;line-height:1.3}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .stat{padding:12px 14px} .stat b{font-size:1.3rem}
+}
+@media (max-width:420px){
+  .topbar .sheet-toggle{display:none}      /* "Case sheet" stays in the chat options menu; the title gets the room */
+  .topbar{gap:4px}
+}
+/* Touch screens (any width: a 1024px tablet has no hover either): actions are always visible, controls are about
+   44px, small inline links get a larger invisible hit area, and inputs use 16px text so iOS does not zoom in. */
+@media (hover:none),(pointer:coarse){
+  .msg-actions,.item-more{opacity:1}
+  .icon-btn,.send-btn{width:44px;height:44px}
+  .icon-btn.subtle,.item-more{width:40px;height:40px}
+  .tool-btn{width:40px;height:40px}
+  .btn-sm,.mode-btn,.code-copy{min-height:40px}
+  .chip,.seg button,.side-new,.side-link,.side-archived,.side-back,.user-btn{min-height:44px}
+  .suggestions .chip,.case-start .chip,.feedback-why .chip,.page-tabs .chip{min-height:40px}
+  .chat-item a{padding-top:11px;padding-bottom:11px}
+  .md .cite-link,.link,.linkish,.doc-name,.result a[href^="tel:"]{position:relative}
+  .md .cite-link::after,.link::after,.linkish::after,.doc-name::after,.result a[href^="tel:"]::after{content:"";position:absolute;inset:-10px -4px}
+  input,select,textarea{font-size:16px}
+  .composer textarea{font-size:16px}
+}
+
 /* ---------- grounded answers: numbered sources, figure check ---------- */
 .cite-num{display:inline-grid;place-items:center;flex:none;min-width:22px;height:20px;padding:0 5px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-size:.72rem;font-weight:700}
 .verify-note{display:flex;gap:8px;align-items:flex-start;margin:12px 0 0;padding:9px 12px;border-radius:10px;background:var(--warn-soft);color:var(--warn);font-size:.86rem}
@@ -725,6 +768,21 @@ h1,h2,h3,h4{line-height:1.3}
 .res-fold-body{padding:0 0 12px}
 .res-fold-body .md-table{margin:0}
 .res-fold-body .cmp{width:100%}
+/* Lender comparison in a narrow column (phones, or beside the case sheet): one card per lender and program, each
+   value labelled, instead of four squeezed columns. Wider columns keep the table. */
+.result{container-type:inline-size}
+.result a[href^="tel:"]{white-space:nowrap}
+@container (max-width:560px){
+  .result .cmp thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  .result .cmp,.result .cmp tbody,.result .cmp tr,.result .cmp td{display:block;width:100%}
+  .result .cmp tr{padding:10px 12px;border-top:1px solid var(--line)}
+  .result .cmp tbody tr:first-child{border-top:0}
+  .result .cmp td{border:0;padding:3px 0}
+  .result .cmp td[data-label]{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px}
+  .result .cmp td[data-label]::before{content:attr(data-label);flex:0 0 7.5rem;font-size:.78rem;color:var(--muted)}
+  .result .cmp tr.detail{padding-top:0}
+  .result .md-table table{min-width:0}
+}
 .res-steps{margin:0;padding-left:1.3em;font-size:.86rem;color:var(--muted)}
 .res-steps li{margin:.15em 0}
 .result .disclaimer{margin-top:12px}

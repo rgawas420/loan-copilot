@@ -128,7 +128,7 @@ function UserMenu({ user, page, onAdmin, onChat, onPassword, onLogout, onBilling
       )}
       <button className="user-btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <span className="avatar">{initials}</span>
-        <span className="user-name">{user.name}{user.role === "admin" && <small>Admin</small>}</span>
+        <span className="user-name"><span>{user.name}</span>{user.role === "admin" && <small>Admin</small>}</span>
       </button>
     </div>
   );

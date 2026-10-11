@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { api, setUnauthorizedHandler } from "./api.js";
 import { useConversation } from "./useConversation.js";
-import AdminConsole from "./components/AdminConsole.jsx";
 import AuthScreen from "./components/AuthScreen.jsx";
-import BillingPage from "./components/BillingPage.jsx";
 import ChatView from "./components/ChatView.jsx";
 import PasswordDialog from "./components/PasswordDialog.jsx";
 import Sidebar from "./components/Sidebar.jsx";
@@ -24,6 +22,11 @@ function readLegacyLink() {
   return caseId && token ? { caseId, token } : null;
 }
 
+// Admin and billing screens load on demand: partners never download the admin console.
+const AdminConsole = lazy(() => import("./components/AdminConsole.jsx"));
+const BillingPage = lazy(() => import("./components/BillingPage.jsx"));
+const PageLoading = () => <main className="chat-main"><p className="muted page-loading" role="status">Loading…</p></main>;
+
 const isNarrow = () => window.matchMedia("(max-width: 900px)").matches;
 const byUpdated = (a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.updated || "").localeCompare(a.updated || "");
 
@@ -34,6 +37,8 @@ function Workspace({ user, onLogout }) {
   const [query, setQuery] = useState("");
   const [archivedView, setArchivedView] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => !isNarrow());
+  const [narrow, setNarrow] = useState(isNarrow);
+  const drawer = narrow && sidebarOpen;           // the sidebar is a modal drawer over the page
   const [pwOpen, setPwOpen] = useState(false);
   const [health, setHealth] = useState({ text: "Checking service", ok: null });
   const [usage, setUsage] = useState(null);
@@ -98,10 +103,29 @@ function Workspace({ user, onLogout }) {
 
   useEffect(() => {                             // the sidebar is an overlay on narrow screens: close it when shrinking
     const mq = window.matchMedia("(max-width: 900px)");
-    const onChange = (e) => setSidebarOpen(!e.matches);
+    const onChange = (e) => { setSidebarOpen(!e.matches); setNarrow(e.matches); };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+
+  // The drawer is modal: focus moves into it, Escape closes it, and focus goes back to the menu button.
+  const wasDrawer = useRef(false);
+  useEffect(() => {
+    if (drawer) {
+      document.querySelector(".sidebar button")?.focus({ preventScroll: true });
+      const onKey = (e) => { if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector("dialog[open], .menu")) setSidebarOpen(false); };
+      document.addEventListener("keydown", onKey);
+      wasDrawer.current = true;
+      return () => document.removeEventListener("keydown", onKey);
+    }
+    if (wasDrawer.current) {
+      wasDrawer.current = false;
+      if (!document.activeElement || document.activeElement === document.body) {
+        document.querySelector('[aria-label="Open sidebar"]')?.focus({ preventScroll: true });
+      }
+    }
+    return undefined;
+  }, [drawer]);
 
   useEffect(() => {
     api.health()
@@ -167,6 +191,8 @@ function Workspace({ user, onLogout }) {
                    onLogout={onLogout} onCollapse={() => setSidebarOpen(false)} />
         </>
       )}
+      <div className="main-slot" inert={drawer || undefined}>
+      <Suspense fallback={<PageLoading />}>
       {route.page === "admin" && user.role === "admin"
         ? <AdminConsole me={user} sidebarOpen={sidebarOpen} onOpenSidebar={() => setSidebarOpen(true)} />
         : route.page === "billing"
@@ -176,6 +202,8 @@ function Workspace({ user, onLogout }) {
                     sidebarOpen={sidebarOpen} onOpenSidebar={() => setSidebarOpen(true)} onNewChat={() => go("#/")}
                     onRename={(t) => rename(conv.id, t)} onPin={(p) => pin(conv.id, p)}
                     onArchive={(a) => archive(conv.id, a)} onDelete={() => remove(conv.id)} />}
+      </Suspense>
+      </div>
       {pwOpen && <PasswordDialog onClose={() => setPwOpen(false)} />}
     </div>
   );

@@ -8,6 +8,12 @@ import { CHECK_LABEL, CHECK_MARK, badgeClass, label, money } from "../format.js"
 const NOT_IN_KB = "Not available in KB";
 const TEXT_ONLY = /^Matched from policy text only/i;
 const known = (v) => v && v !== NOT_IN_KB && v !== "Unknown";
+// A tap-to-call link for a number copied from the knowledge base: only a complete Indian number (10 digits, with an
+// optional +91 / 0 prefix); anything else stays plain text rather than dialling a guessed number.
+function telHref(v) {
+  const d = String(v).replace(/[\s()-]/g, "").replace(/^(\+91|0091|0)/, "");
+  return /^[6-9]\d{9}$/.test(d) ? `tel:+91${d}` : null;
+}
 
 const STATUS_TEXT = {
   "Strong Match": "Strong match",
@@ -42,9 +48,9 @@ function ComparisonRow({ row, top }) {
     <>
       <tr className={top ? "best" : ""}>
         <td><b>{row.lender}</b><br /><span className="muted">{row.program}</span>{row.sample && <span className="sample">sample</span>}</td>
-        <td><span className={`badge small ${badgeClass(row.status)}`}>{row.status}</span></td>
-        <td className="nowrap">{money(row.max_loan)}</td>
-        <td>
+        <td data-label="Status"><span className={`badge small ${badgeClass(row.status)}`}>{row.status}</span></td>
+        <td data-label="Indicative max" className="nowrap">{money(row.max_loan)}</td>
+        <td data-label="Checks">
           {n("pass")} pass, {n("fail")} fail, {n("deviation") + n("unknown")} open{" "}
           <button type="button" className="linkish" aria-expanded={open} onClick={() => setOpen(!open)}>
             {open ? "Hide" : "Details"}
@@ -107,7 +113,7 @@ function Eligibility({ r }) {
 function Contact({ r }) {
   const bits = [
     known(r.banker_rm) && <>RM <strong>{r.banker_rm}</strong></>,
-    known(r.mobile) && <>mobile <strong>{r.mobile}</strong></>,
+    known(r.mobile) && <>mobile <strong>{telHref(r.mobile) ? <a href={telHref(r.mobile)}>{r.mobile}</a> : r.mobile}</strong></>,
     known(r.urban_money_code) && <>Urban Money code <strong>{r.urban_money_code}</strong></>,
   ].filter(Boolean);
   return (

@@ -20,6 +20,10 @@ const defaultAsk = (list) => (list.every((f) => f.kind === "image")
   ? `Summarize ${list.length === 1 ? "this image" : "these images"}.`
   : `Summarize ${list.length === 1 ? "this document" : "these documents"}.`);
 const MAX_ATTACHMENTS = 5;
+// Unsent text per chat, kept while the app is open, so switching chats does not lose a half-typed question.
+const drafts = new Map();
+// Focusing the box on a touch screen opens the keyboard over the answer being read: only do it with a mouse.
+const finePointer = () => window.matchMedia?.("(pointer: fine)").matches ?? true;
 const size = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
 export default function Composer({ convKey, modes, defaultMode, question, busy, streaming, onSend, onStop, onMode,
@@ -35,7 +39,12 @@ export default function Composer({ convKey, modes, defaultMode, question, busy, 
 
   const mode = override && modes.includes(override) ? override : defaultMode;
   useEffect(() => { onMode?.(mode); }, [mode, onMode]);
-  useEffect(() => { setOverride(null); setText(""); setFiles([]); }, [convKey]);
+  const textRef = useRef(text);
+  textRef.current = text;
+  useEffect(() => {                            // switching chats: keep this chat's draft, restore the other's
+    setOverride(null); setText(drafts.get(convKey) || ""); setFiles([]);
+    return () => { if (textRef.current.trim()) drafts.set(convKey, textRef.current); else drafts.delete(convKey); };
+  }, [convKey]);
   useEffect(() => {                            // a suggestion chip to complete ("Change the city to ")
     if (!prefill) return;
     setText(prefill.text);
@@ -44,7 +53,7 @@ export default function Composer({ convKey, modes, defaultMode, question, busy, 
   }, [prefill]);
   useEffect(() => () => files.forEach((f) => f.preview && URL.revokeObjectURL(f.preview)), []);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setOverride((o) => (o === "kb" || o === "ask" ? o : null)); }, [defaultMode]);
-  useEffect(() => { if (!busy) ref.current?.focus({ preventScroll: true }); }, [busy, convKey, question?.key]);
+  useEffect(() => { if (!busy && finePointer()) ref.current?.focus({ preventScroll: true }); }, [busy, convKey, question?.key]);
 
   useLayoutEffect(() => {                      // grow with the text, up to the CSS max-height
     const el = ref.current;
@@ -110,6 +119,8 @@ export default function Composer({ convKey, modes, defaultMode, question, busy, 
     const sent = withFiles ? ready.map(({ id, name, size: s, kind }) => ({ id, name, size: s, kind })) : [];
     onSend(text.trim() || defaultAsk(sent), mode, sent);
     files.forEach((f) => f.preview && URL.revokeObjectURL(f.preview));
+    drafts.delete(convKey);
+    textRef.current = "";
     setText("");
     setFiles([]);
   }
@@ -120,6 +131,9 @@ export default function Composer({ convKey, modes, defaultMode, question, busy, 
 
   return (
     <form className={`composer${streaming ? " is-streaming" : ""}`} onSubmit={submit}
+          onClick={(e) => {                     // a tap on the box's padding (not a button) goes to the text
+            if (e.target === e.currentTarget || e.target.classList?.contains("composer-bar")) ref.current?.focus();
+          }}
           onDragOver={(e) => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault(); }}
           onDrop={(e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); attach(e.dataTransfer.files); } }}>
       {pinHint && <p className="composer-hint">{pinHint}</p>}
