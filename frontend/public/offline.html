@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0e6b52">
+<title>Offline · Loan Copilot</title>
+<style>
+  :root { color-scheme: light dark; --bg:#ffffff; --ink:#1d1e20; --muted:#5f6368; --accent:#0e6b52; --accent-ink:#ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#16181a; --ink:#e8eaed; --muted:#9aa0a6; --accent:#3cb58c; --accent-ink:#0d1f19; } }
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; padding: 0 16px; text-align: center; }
+  img { width: 72px; height: 72px; border-radius: 16px; }
+  h1 { font-size: 20px; margin: 20px 0 6px; }
+  p { color: var(--muted); margin: 0 0 24px; max-width: 360px; }
+  button { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 999px; padding: 10px 22px;
+           font: 600 15px/1 inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <img src="/icons/icon-192.png" alt="">
+  <h1>You're offline</h1>
+  <p>Loan Copilot needs an internet connection to check lenders and answer questions. Your chats are saved and will be here when you reconnect.</p>
+  <button onclick="location.reload()">Try again</button>
+</main>
+<script>window.addEventListener("online", () => location.reload());</script>
+</body>
+</html>

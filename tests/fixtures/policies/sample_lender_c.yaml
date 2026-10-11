@@ -1,0 +1,27 @@
+# SAMPLE DATA - fictitious lender. Replace with a verified policy before real use.
+lender: Sample Lender C
+sample: true
+programs:
+  - id: C-PL-SAL
+    name: Personal Loan - Salaried
+    loan_type: Personal Loan
+    profiles: [Salaried]
+    age_min: 22
+    age_max: 58
+    min_cibil: 750
+    min_monthly_income: 25000
+    min_job_years: 0.5
+    min_total_exp_years: 1
+    salary_modes: [Bank Transfer]
+    amount_min: 100000
+    amount_max: 4000000
+    foir: 0.55
+    roi: 12.5
+    tenure_years: 5
+    no_overdue: true
+    no_settled: true
+    banker_rm: Sample RM Three
+    mobile: 90000-00003
+    urban_money_code: UM-SAMPLE-C12
+    policy_last_verified: 2026-09-10
+    source: sample_lender_c.md

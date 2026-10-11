@@ -1,0 +1,44 @@
+# SAMPLE DATA - fictitious lender. Replace with a verified policy before real use.
+lender: Sample Lender B
+sample: true
+programs:
+  - id: B-HL-SE
+    name: Home Loan - Self-Employed Program
+    loan_type: Home Loan
+    profiles: [Self-Employed Business, Self-Employed Professional]
+    age_min: 25
+    age_max: 65
+    min_cibil: 700
+    min_business_years: 3
+    max_ltv: 0.75
+    foir: 0.55
+    roi: 9.25
+    tenure_years: 20
+    legal_allowed: [NA, NA-TP, Municipal]
+    legal_case_to_case: [Gram Panchayat, Gunthewari]   # with legal opinion
+    rera_required_under_construction: true
+    no_settled: true
+    banker_rm: Sample RM Two
+    mobile: 90000-00002
+    urban_money_code: UM-SAMPLE-B07
+    policy_last_verified: 2026-09-20
+    source: sample_lender_b.md
+
+  - id: B-LAP
+    name: Loan Against Property - Residential/Commercial
+    loan_type: LAP
+    age_min: 25
+    age_max: 65
+    min_cibil: 700
+    max_ltv: 0.65
+    foir: 0.65
+    roi: 10.5
+    tenure_years: 15
+    legal_allowed: [NA, NA-TP, Municipal]
+    legal_case_to_case: [Gaothan, Gunthewari]
+    no_settled: true
+    banker_rm: Sample RM Two
+    mobile: 90000-00002
+    urban_money_code: UM-SAMPLE-B31
+    policy_last_verified: 2026-09-20
+    source: sample_lender_b.md

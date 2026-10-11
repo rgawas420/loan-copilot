@@ -1,0 +1,59 @@
+# Golden cases: case -> expected status and top lender. Run by tests/test_golden_cases.py (rules engine, no LLM)
+# and by `python -m evals.run_evals` (full agent, real LLM if configured).
+# Expectations are written against the SAMPLE policies in data/policies. When you replace them with real
+# policies, rewrite these cases with your credit team: they are your regression suite.
+
+bases:
+  hl_salaried: {loan_type: Home Loan, loan_amount: 40 lakh, age: "32", profile: Salaried, cibil: "760", overdue: "No",
+                settled: "No", existing_emi: "0", pin: "411001", hl_purpose: Resale, agreement_value: 60 lakh,
+                prop_pin: "411038", possession: Ready Possession, legal_cat: NA, net_salary: "85000",
+                current_job_years: "3"}
+  hl_self_employed: {loan_type: Home Loan, loan_amount: 40 lakh, age: "32", profile: Self-Employed Business,
+                     cibil: "760", overdue: "No", settled: "No", existing_emi: "0", pin: "411001",
+                     hl_purpose: New Purchase, agreement_value: 60 lakh, prop_pin: "411038",
+                     possession: Ready Possession, legal_cat: NA, itr_income: 24 lakh, business_years: "5"}
+  lap_salaried: {loan_type: LAP, loan_amount: 30 lakh, age: "40", profile: Salaried, cibil: "740", overdue: "No",
+                 settled: "No", existing_emi: "0", pin: "411001", market_value: 80 lakh, prop_use: Residential,
+                 prop_pin: "411038", legal_cat: NA, net_salary: "90000"}
+  pl_salaried: {loan_type: Personal Loan, loan_amount: 5 lakh, age: "30", profile: Salaried, cibil: "780",
+                overdue: "No", settled: "No", existing_emi: "0", pin: "411001", net_salary: "60000",
+                employer: Acme, current_job_years: "2", total_exp_years: "5", salary_mode: Bank Transfer}
+  bl_business: {loan_type: Business Loan, loan_amount: 20 lakh, age: "38", profile: Self-Employed Business,
+                cibil: "760", overdue: "No", settled: "No", existing_emi: "0", pin: "411001", business_years: "5",
+                turnover: 1.2 cr, net_profit: 18 lakh, unsecured_running: "1", enquiries_3m: "2",
+                bounce_overdue: "No"}
+  edu: {loan_type: Education Loan, loan_amount: 20 lakh, age: "45", profile: Salaried, cibil: "760", overdue: "No",
+        settled: "No", existing_emi: "0", pin: "411001", course: MS, country: USA, course_cost: 40 lakh,
+        coapp_income: 18 lakh}
+
+cases:
+  - {id: hl-01-clean,            base: hl_salaried, expect: {status: Strong Match, lender: Sample Lender A}}
+  - {id: hl-02-cibil-deviation,  base: hl_salaried, changes: {cibil: "710"}, expect: {status: Possible - Credit Check Required, lender: Sample Lender A}}
+  - {id: hl-03-cibil-low,        base: hl_salaried, changes: {cibil: "680"}, expect: {status: Not Suitable, lender: null}}
+  - {id: hl-04-cibil-unchecked,  base: hl_salaried, changes: {cibil: Not Checked}, expect: {status: Possible - Credit Check Required, lender: Sample Lender A}}
+  - {id: hl-05-gunthewari,       base: hl_salaried, changes: {legal_cat: Gunthewari}, expect: {status: Not Suitable, lender: null}}
+  - {id: hl-06-ltv-too-high,     base: hl_salaried, changes: {loan_amount: 55 lakh}, expect: {status: Not Suitable, lender: null}}
+  - {id: hl-07-uc-rera-yes,      base: hl_salaried, changes: {possession: Under Construction, rera: "Yes"}, expect: {status: Strong Match, lender: Sample Lender A}}
+  - {id: hl-08-uc-rera-unknown,  base: hl_salaried, changes: {possession: Under Construction, rera: Do Not Know}, expect: {status: Possible - Credit Check Required, lender: Sample Lender A}}
+  - {id: hl-09-age-over,         base: hl_salaried, changes: {age: "62"}, expect: {status: Not Suitable, lender: null}}
+  - {id: hl-10-settled,          base: hl_salaried, changes: {settled: "Yes"}, expect: {status: Not Suitable, lender: null}}
+  - {id: hl-11-overdue-silent,   base: hl_salaried, changes: {overdue: "Yes"}, expect: {status: Possible - Credit Check Required, lender: Sample Lender A}}
+  - {id: hl-12-low-salary,       base: hl_salaried, changes: {net_salary: "35000"}, expect: {status: Not Suitable, lender: null}}
+  - {id: hl-13-self-employed,    base: hl_self_employed, expect: {status: Strong Match, lender: Sample Lender B}}
+  - {id: hl-14-se-gram-panchayat, base: hl_self_employed, changes: {legal_cat: Gram Panchayat}, expect: {status: Possible - Credit Check Required, lender: Sample Lender B}}
+  - {id: hl-15-se-young-business, base: hl_self_employed, changes: {business_years: "2"}, expect: {status: Not Suitable, lender: null}}
+  - {id: lap-01-clean,           base: lap_salaried, expect: {status: Strong Match, lender: Sample Lender B}}
+  - {id: lap-02-gp-not-accepted, base: lap_salaried, changes: {legal_cat: GP}, expect: {status: Not Suitable, lender: null}}
+  - {id: lap-03-gaothan,         base: lap_salaried, changes: {legal_cat: Gaothan}, expect: {status: Possible - Credit Check Required, lender: Sample Lender B}}
+  - {id: lap-04-ltv-too-high,    base: lap_salaried, changes: {loan_amount: 60 lakh}, expect: {status: Not Suitable, lender: null}}
+  - {id: pl-01-clean,            base: pl_salaried, expect: {status: Strong Match, lender: Sample Lender C}}
+  - {id: pl-02-cash-salary,      base: pl_salaried, changes: {salary_mode: Cash}, expect: {status: Not Suitable, lender: null}}
+  - {id: pl-03-cibil-740,        base: pl_salaried, changes: {cibil: "740"}, expect: {status: Not Suitable, lender: null}}
+  - {id: pl-04-overdue-unknown,  base: pl_salaried, changes: {overdue: Do Not Know}, expect: {status: Possible - Credit Check Required, lender: Sample Lender C}}
+  - {id: bl-01-clean,            base: bl_business, expect: {status: Strong Match, lender: Sample Lender A}}
+  - {id: bl-02-many-enquiries,   base: bl_business, changes: {enquiries_3m: "6"}, expect: {status: Not Suitable, lender: null}}
+  - {id: bl-03-bounces-unknown,  base: bl_business, changes: {bounce_overdue: Do Not Know}, expect: {status: Possible - Credit Check Required, lender: Sample Lender A}}
+  - {id: bl-04-low-turnover,     base: bl_business, changes: {turnover: 40 lakh}, expect: {status: Not Suitable, lender: null}}
+  - {id: bl-05-settled,          base: bl_business, changes: {settled: "Yes"}, expect: {status: Not Suitable, lender: null}}
+  - {id: edu-01-no-policy,       base: edu, expect: {status: More Information Required, lender: null}}
+  - {id: pl-05-incomplete,       base: pl_salaried, changes: {salary_mode: ""}, expect: {status: More Information Required, lender: null}}

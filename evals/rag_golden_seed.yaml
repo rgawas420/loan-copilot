@@ -1,0 +1,67 @@
+# Golden tests for grounded answers (Admin > RAG quality). Load with:  python -m evals.seed_rag_golden
+# Written against the knowledge base as of 2026-10-09 (Pan India RM lists of Aug 2026 - both the list and the bank-wise
+# list match "Pan India RM list Aug" - and the AUG 26 codes / payout sheets).
+# When those files are replaced, re-check the expected phone numbers, codes and payouts with the data team.
+#
+# expected_answer: text or figures the answer must contain ("(not found)" = the answer must say it was not found)
+# expected_document: a title or file name the model must have been given (and cite)
+
+cases:
+  # ---------------------------------------------------------------- banker search (directory, newest list)
+  - {category: banker, question: "Who is the home loan RM for Bajaj Finserv in Pune?", expected_answer: "9604454809", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "give me sbi rm list in pune location for home loan", expected_answer: "9923000545", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "HDFC Bank business loan RM list in Pune", expected_answer: "9673696000", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "Kotak LAP RM contact in Bangalore", expected_answer: "8123041571", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "ICICI Bank home loan banker in Mumbai", expected_answer: "9762819619", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "Axis Bank personal loan RM in Delhi", expected_answer: "9354439591", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "Tata Capital LAP RM in Bangalore", expected_answer: "7004156167", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "Aditya Birla home loan RM contact Pune", expected_answer: "9561125000", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "IDFC First personal loan RM in Mumbai", expected_answer: "8779326728", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "L&T Finance home loan RM Mumbai", expected_answer: "7355955100", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "Canara Bank home loan RM in Ahmedabad", expected_answer: "9099909324", expected_document: "Pan India RM list Aug"}
+  - {category: banker, question: "Piramal LAP banker contact in Pune", expected_answer: "9595966202", expected_document: "Pan India RM list Aug"}
+
+  # ---------------------------------------------------------------- the same bankers, other spellings
+  - {category: alias, question: "kotak loan against property RM in Bengaluru", expected_answer: "8123041571", expected_document: "Pan India RM list Aug"}
+  - {category: alias, question: "icici hl rm mumbai", expected_answer: "9762819619", expected_document: "Pan India RM list Aug"}
+  - {category: alias, question: "State Bank of India housing loan manager contact Pune", expected_answer: "9923000545", expected_document: "Pan India RM list Aug"}
+  - {category: alias, question: "bajaj housing finance home loan RM pune", expected_answer: "9604454809", expected_document: "Pan India RM list Aug"}
+
+  # ---------------------------------------------------------------- Urban Money codes (exact rows)
+  - {category: code, question: "Kotak Mahindra code for medical equipment loan", expected_answer: "171504070", expected_document: "AUG  26 - CODES AND CONTACTS"}
+  - {category: code, question: "Yes Bank DSA code for machinery loan", expected_answer: "DSASBLNCR112", expected_document: "AUG  26 - CODES AND CONTACTS"}
+  - {category: code, question: "ICICI Bank new car loan code", expected_answer: "368116", expected_document: "AUG  26 - CODES AND CONTACTS"}
+  - {category: code, question: "Orix India Finance code", expected_answer: "F/V000758", expected_document: "AUG  26 - CODES AND CONTACTS"}
+  - {category: code, question: "Chola code for industrial machine loan", expected_answer: "11624", expected_document: "AUG  26 - CODES AND CONTACTS"}
+
+  # ---------------------------------------------------------------- payouts (newest sheet)
+  - {category: payout, question: "South Indian Bank new car loan payout", expected_answer: "1.1%", expected_document: "AUG  26 PAYOUT SHEET"}
+  - {category: payout, question: "HDB Finserv new car loan payout", expected_answer: "1.75%", expected_document: "AUG  26 PAYOUT SHEET"}
+  - {category: payout, question: "Saraswat Bank car loan payout", expected_answer: "1.5%", expected_document: "AUG  26 PAYOUT SHEET"}
+
+  # ---------------------------------------------------------------- policy facts (PDF / text documents)
+  - {category: policy, question: "What is the maximum loan amount in the business loan one pager policy?", expected_answer: "100 Lacs", expected_document: "BL - One Pager Policy V2"}
+  - {category: policy, question: "Maximum tenure for the surrogate business loan program?", expected_answer: "60 Months", expected_document: "BL - One Pager Policy V2"}
+  - {category: policy, question: "Minimum turnover for the GST surrogate business loan?", expected_answer: "40 Lacs", expected_document: "BL - One Pager Policy V2"}
+  - {category: policy, question: "Aditya Birla STSL LAP maximum loan amount", expected_answer: "3 crore", expected_document: "Aditya Birla STSL LAP Reference"}
+  - {category: policy, question: "What ROI does Aditya Birla STSL LAP offer?", expected_answer: "11%", expected_document: "Aditya Birla STSL LAP Reference"}
+  - {category: policy, question: "Aditya Birla STSL LAP RSM contact number", expected_answer: "9049000381", expected_document: "Aditya Birla STSL LAP Reference"}
+  - {category: policy, question: "How does interest work on the Flexi business loan?", expected_document: "FAQs Flexi BL"}
+
+  # ---------------------------------------------------------------- pincode serviceability
+  - {category: pincode, question: "Is pincode 400006 serviceable for Fibe?", expected_answer: "400006", expected_document: "fibe pincode list"}
+
+  # ---------------------------------------------------------------- outdated sources: the newest edition must be used
+  - {category: outdated, question: "Bajaj Finserv home loan RM in Pune from the latest RM list", expected_answer: "9604454809", expected_document: "Pan India RM list Aug"}
+  - {category: outdated, question: "Latest Kotak Mahindra machinery loan code", expected_answer: "171504070", expected_document: "AUG  26 - CODES AND CONTACTS"}
+
+  # ---------------------------------------------------------------- missing data: must say not found, never invent
+  - {category: missing, question: "What is the home loan payout for Zentrix Housing Finance?", expected_answer: "(not found)"}
+  - {category: missing, question: "Zentrix Housing Finance RM contact in Pune", expected_answer: "(not found)"}
+  - {category: missing, question: "What is the gold loan ROI for Zentrix Bank?", expected_answer: "(not found)"}
+
+  # ---------------------------------------------------------------- customer profiles (app-calculated eligibility)
+  - {category: profile, question: "Salaried customer, net salary ₹1,45,000 per month, no existing EMIs, CIBIL 845, wants a ₹98 lakh home loan for a flat in Pune. Give banker list in Pune.", expected_answer: "79,750", expected_document: "Pan India RM list Aug", loan_type: "Home Loan"}
+  - {category: profile, question: "Customer earns 18 LPA, salaried, no EMIs, needs 60 lakh home loan in Mumbai, CIBIL 790. Which bankers should I approach?", expected_answer: "1,50,000", expected_document: "Pan India RM list Aug", loan_type: "Home Loan"}
+  - {category: profile, question: "Salaried, ₹90,000 a month, EMI ₹15,000, wants ₹30 lakh LAP. CIBIL 760. Suggest bankers.", expected_answer: "the city where the property is"}
+  - {category: profile, question: "Self-employed doctor, income 2 lakh per month, existing EMI 40k, needs 50 lakh home loan in Bangalore, CIBIL 780. Which lenders should I approach?", expected_answer: "70,000", expected_document: "Pan India RM list Aug", loan_type: "Home Loan"}

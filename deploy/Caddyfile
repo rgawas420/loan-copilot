@@ -1,0 +1,24 @@
+{$DOMAIN} {
+	encode gzip zstd
+
+	# Streaming answers (server-sent events) must reach the browser as they are written.
+	reverse_proxy app:8000 {
+		flush_interval -1
+		transport http {
+			read_timeout 10m
+		}
+	}
+
+	# Uploads: knowledge-base documents (KB_UPLOAD_MAX_MB, default 50 MB) and chat attachments.
+	request_body {
+		max_size 60MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}

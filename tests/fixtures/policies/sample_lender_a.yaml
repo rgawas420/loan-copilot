@@ -1,0 +1,54 @@
+# SAMPLE DATA - fictitious lender. Replace with a verified policy before real use.
+# Structured rules read by app/rag/rules.py. Every field except id/name/loan_type is optional:
+# leave a rule out and the engine does not check it. Amounts are in rupees, income is monthly.
+lender: Sample Lender A
+sample: true
+programs:
+  - id: A-HL-SAL
+    name: Home Loan - Salaried Prime
+    loan_type: Home Loan
+    profiles: [Salaried]
+    age_min: 23
+    age_max: 60
+    min_cibil: 725
+    cibil_deviation_floor: 700        # 700-724 allowed as a deviation (5% lower LTV)
+    min_monthly_income: 40000
+    min_job_years: 1
+    amount_min: 1000000
+    amount_max: 50000000
+    ltv_slabs: [[3000000, 0.80], [null, 0.75]]   # up to 30 lakh: 80%, above: 75%
+    foir: 0.60
+    roi: 8.75
+    tenure_years: 25
+    legal_allowed: [NA, NA-TP, Municipal]
+    legal_case_to_case: []
+    rera_required_under_construction: true
+    no_settled: true
+    banker_rm: Sample RM One
+    mobile: 90000-00001
+    urban_money_code: UM-SAMPLE-A01
+    policy_last_verified: 2026-09-15
+    source: sample_lender_a.md
+
+  - id: A-BL-UNSEC
+    name: Business Loan - Unsecured
+    loan_type: Business Loan
+    profiles: [Self-Employed Business, Self-Employed Professional]
+    min_cibil: 720
+    min_business_years: 3
+    min_turnover: 5000000
+    amount_min: 500000
+    amount_max: 7500000
+    foir: 0.60
+    roi: 16.0
+    tenure_years: 4
+    max_unsecured_loans: 3
+    max_enquiries_3m: 4
+    no_bounces: true
+    no_overdue: true
+    no_settled: true
+    banker_rm: Sample RM One
+    mobile: 90000-00001
+    urban_money_code: UM-SAMPLE-A22
+    policy_last_verified: 2026-09-15
+    source: sample_lender_a.md

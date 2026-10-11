@@ -1,0 +1,19 @@
+.env
+venv/
+**/__pycache__/
+.pytest_cache/
+*.db
+*.db-wal
+*.db-shm
+var/
+uploads/*
+frontend/node_modules/
+frontend/dist/
+.env.*
+!.env.production.example
+data/URBAN MONEY/
+tests/
+.git/
+deploy/
+bugs.md
+Urban_Money_Loan_Copilot_Prompt.md

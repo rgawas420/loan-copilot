@@ -1,0 +1,42 @@
+# Production: the app behind Caddy (automatic HTTPS from Let's Encrypt).
+#   1. Point your domain's DNS A record at the server.
+#   2. cp .env.production.example .env  and fill it in (DOMAIN, keys, ADMIN_API_KEY, ...).
+#   3. Copy the Urban Money documents into ./kb/ (see DEPLOY.md).
+#   4. docker compose up -d --build
+services:
+  app:
+    build: .
+    image: urban-money-copilot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./storage:/srv/var          # databases, KB index, OCR cache, attachments, ad images
+      - ./kb:/srv/kb                # the knowledge-base documents (admins upload into this folder)
+      - ./policies:/srv/data/policies   # structured lender policies (.yaml), kept across rebuilds
+    expose:
+      - "8000"                      # reachable by Caddy only; not published to the internet
+    deploy:
+      resources:
+        limits:
+          memory: 6g
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env, e.g. copilot.example.com}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Urban Money - Loan Copilot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark" aria-hidden="true">₹</span><span>Urban Money <b>Loan Copilot</b></span></div>
+  <div class="top-actions">
+    <span id="health" class="pill" role="status">Checking service</span>
+    <button id="btn-new" class="ghost">Start new case</button>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- Case sheet: fills in as the partner answers -->
+  <aside class="sheet" aria-label="Case sheet">
+    <details open id="sheet-details">
+      <summary>Case sheet <span id="sheet-count" class="count">0 answered</span></summary>
+      <dl id="ledger" class="ledger"><p class="empty">Answers appear here as you go.</p></dl>
+    </details>
+  </aside>
+
+  <section class="stage" aria-live="polite">
+    <!-- Free-text intake: describe the case once, then answer only what is missing -->
+    <details id="intake" class="intake" open>
+      <summary>Describe the case in your own words</summary>
+      <label for="intake-text" class="hint">For example: Salaried, 32, 85k in hand, wants 40 lakh for a resale flat in Pune, CIBIL 760, no EMIs. Leave out the customer's name.</label>
+      <textarea id="intake-text" rows="3" maxlength="2000"></textarea>
+      <button type="button" id="btn-intake" class="ghost">Fill the case sheet</button>
+      <p id="intake-msg" class="hint" role="status"></p>
+    </details>
+
+    <div class="progress" aria-hidden="true"><i id="bar"></i></div>
+    <div id="ready" class="ready" hidden>
+      <span id="ready-msg"></span>
+      <button id="btn-find" class="primary">Find suitable banks</button>
+    </div>
+
+    <!-- One question at a time -->
+    <form id="qform" class="qcard" autocomplete="off" novalidate>
+      <span id="qreq" class="req" hidden>Needed to match lenders</span>
+      <label id="qtext" for="qinput" class="qtext">Loading</label>
+      <div id="qhint" class="hint"></div>
+      <div id="qopts" class="opts" role="group" aria-labelledby="qtext"></div>
+      <input id="qinput" type="text" inputmode="text">
+      <p id="qerr" class="err" role="alert"></p>
+      <div class="nav">
+        <button type="button" id="btn-back" class="ghost">Back</button>
+        <button type="button" id="btn-skip" class="ghost" hidden>Skip this question</button>
+        <button type="button" id="btn-save" class="ghost">Save and continue later</button>
+        <button type="submit" id="btn-next" class="primary">Next question</button>
+      </div>
+      <p id="savemsg" class="hint"></p>
+    </form>
+
+    <section id="result" class="result" hidden></section>
+
+    <!-- Follow-up questions about the result -->
+    <section id="chat" class="chat" hidden aria-label="Ask about this result">
+      <h3>Ask about this result</h3>
+      <div id="chat-suggest" class="opts small"></div>
+      <ol id="chat-log" class="chat-log"></ol>
+      <form id="chat-form" class="chat-form">
+        <label for="chat-input" class="sr-only">Your question</label>
+        <input id="chat-input" type="text" maxlength="500" placeholder="Why not the other lenders? What if CIBIL is 720?">
+        <button type="submit" class="primary">Ask</button>
+      </form>
+    </section>
+  </section>
+
+  <!-- Policy upload for authorised staff -->
+  <aside class="tools">
+    <details>
+      <summary>Add lender policy</summary>
+      <p class="hint">Structured rules (.yaml, used for matching) or a policy document (PDF, Word, Excel, TXT, MD, images, used as supporting text). Needs the admin key.</p>
+      <input id="adminkey" type="password" placeholder="Admin key" aria-label="Admin key">
+      <input id="policyfile" type="file" accept=".yaml,.yml,.pdf,.docx,.doc,.txt,.md,.csv,.xls,.xlsx,.xlsm,.png,.jpg,.jpeg,.webp,.gif,.bmp" aria-label="Policy file">
+      <div class="tag-row">
+        <input id="up-lender" type="text" placeholder="Lender name (documents only)" aria-label="Lender name">
+        <select id="up-type" aria-label="Loan type">
+          <option value="">Loan type (documents only)</option>
+          <option>Home Loan</option><option>LAP</option><option>Working Capital</option><option>Business Loan</option>
+          <option>Personal Loan</option><option>Professional Loan</option><option>Machinery Loan</option>
+          <option>New Car</option><option>Used Car</option><option>Commercial Vehicle</option>
+          <option>Construction Equipment</option><option>Education Loan</option><option>LRD</option>
+          <option>Construction Finance</option><option>Other</option>
+        </select>
+      </div>
+      <button id="btn-upload" class="ghost">Upload policy</button>
+      <p id="uploadmsg" class="hint" role="status"></p>
+    </details>
+  </aside>
+</main>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

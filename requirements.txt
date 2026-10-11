@@ -1,0 +1,32 @@
+# Versions intentionally lower-bounded. Pin them after your first successful install (pip freeze).
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+python-multipart>=0.0.9
+pydantic-settings>=2.4
+pyyaml>=6.0
+
+langgraph>=0.2
+langchain-core>=0.3
+langchain-groq>=0.2
+langchain-openai>=0.3        # golden-test judge on OpenAI (EVAL_JUDGE_PROVIDER=openai)
+langchain-tavily>=0.1
+langchain-pinecone>=0.2
+langchain-huggingface>=0.1
+langchain-text-splitters>=0.3
+sentence-transformers>=3.0
+pinecone>=5.0
+
+pypdf>=4.0
+python-docx>=1.1
+# Urban Money knowledge base loaders: spreadsheets, scanned PDFs, OCR for images
+openpyxl>=3.1
+xlrd>=2.0
+pyxlsb>=1.0
+pymupdf>=1.24
+rapidocr-onnxruntime>=1.3
+python-dotenv>=1.0
+
+# tests
+pytest>=8.0
+httpx>=0.27
