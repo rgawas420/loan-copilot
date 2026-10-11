@@ -600,19 +600,18 @@ def merge(keep_doc_id: str, others: List[dict], by: str = "") -> dict:
 
 
 def cached_parts(sha: str, verified: bool = True):
-    """Text of any version (current or archived): its verified text if an admin saved one (unless
-    verified=False), else the extraction cache; None if neither is available."""
+    """Text of any version (current or archived) from the extraction cache, with its verified text applied if an
+    admin saved one (unless verified=False); None if neither is available."""
     from app.core.config import get_settings
     from app.services.ingestion import Part
-    if verified:
-        from app.services.kb_verify import parts_for
-        v = parts_for(sha)
-        if v:
-            return v
+    parts = None
     cache = get_settings().kb_cache_dir / f"{sha}.json"
-    if not cache.exists():
-        return None
-    try:
-        return [Part.from_dict(p) for p in json.loads(cache.read_text(encoding="utf-8"))["parts"]]
-    except (ValueError, KeyError, TypeError):
-        return None
+    if cache.exists():
+        try:
+            parts = [Part.from_dict(p) for p in json.loads(cache.read_text(encoding="utf-8"))["parts"]]
+        except (ValueError, KeyError, TypeError):
+            parts = None
+    if verified:
+        from app.services.kb_verify import apply
+        return apply(sha, parts)
+    return parts

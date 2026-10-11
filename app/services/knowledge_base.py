@@ -82,7 +82,7 @@ def _db():
         category TEXT, meta_source TEXT, created TEXT, updated TEXT);
     CREATE TABLE IF NOT EXISTS kb_versions(doc_id TEXT, version INTEGER, sha TEXT, status TEXT, size INTEGER,
         stored TEXT, note TEXT, created TEXT, by TEXT, PRIMARY KEY(doc_id, version));
-    """ + lookup.SCHEMA + banker_directory_schema() + aliases_schema() + policy_facts_schema() + kb_staging_schema() + kb_verify_schema() + kb_audit_schema())
+    """ + lookup.SCHEMA + banker_directory_schema() + aliases_schema() + policy_facts_schema() + kb_staging_schema() + kb_verify_schema() + ocr_review_schema() + kb_audit_schema())
     _migrate(c, s.kb_index_db)
     return c
 
@@ -106,6 +106,11 @@ def _migrate(c, path):
     for col, typ in DOC_COLUMNS.items():
         if col not in have:
             c.execute(f"ALTER TABLE kb_docs ADD COLUMN {col} {typ}")
+    from app.services.kb_verify import COLUMNS as VERIFIED_COLUMNS
+    have = {r["name"] for r in c.execute("PRAGMA table_info(kb_verified)")}
+    for col, typ in VERIFIED_COLUMNS.items():
+        if col not in have:
+            c.execute(f"ALTER TABLE kb_verified ADD COLUMN {col} {typ}")
     try:            # the database itself refuses a second ACTIVE version of a document
         c.execute("CREATE UNIQUE INDEX IF NOT EXISTS kb_versions_one_active ON kb_versions(doc_id) WHERE status='ACTIVE'")
     except sqlite3.IntegrityError:
@@ -146,6 +151,11 @@ def kb_verify_schema() -> str:
     return SCHEMA
 
 
+def ocr_review_schema() -> str:
+    from app.services.ocr_review import SCHEMA
+    return SCHEMA
+
+
 def _store_key() -> str:
     from app.rag.vectorstore import is_pinecone
     s = get_settings()
@@ -166,13 +176,8 @@ def _hash_file(path: Path) -> str:
 
 
 # ------------------------------------------------------------------ extraction cache
-def _extract_cached(path: Path, sha: str) -> List[Part]:
-    """The text of a file: an admin's verified text for this content if there is one (kb_verify), else the
-    cached extraction, else a fresh extraction (OCR included), which is then cached."""
-    from app.services import kb_verify
-    verified = kb_verify.parts_for(sha)
-    if verified:
-        return verified
+def machine_extract(path: Path, sha: str) -> List[Part]:
+    """The machine extraction of a file (text layer, tables, OCR), from the cache or extracted now and cached."""
     cache = get_settings().kb_cache_dir / f"{sha}.json"
     if cache.exists():
         try:
@@ -186,6 +191,16 @@ def _extract_cached(path: Path, sha: str) -> List[Part]:
     cache.write_text(json.dumps({"v": extractor_version(path.suffix), "file": path.name,
                                  "parts": [p.to_dict() for p in parts]}, ensure_ascii=False), encoding="utf-8")
     return parts
+
+
+def _extract_cached(path: Path, sha: str) -> List[Part]:
+    """The text of a file: its machine extraction with an admin's verified text for this content applied
+    (kb_verify: all of it, or only its OCR'd pages)."""
+    from app.services import kb_verify
+    v = kb_verify.get(sha)
+    if not kb_verify.needs_machine(v):
+        return kb_verify.apply(sha, None, v)
+    return kb_verify.apply(sha, machine_extract(path, sha), v)
 
 
 def _kind(parts: List[Part], suffix: str) -> str:

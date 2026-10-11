@@ -136,8 +136,13 @@ export const api = {
   kbHistorySearch: (query) => request("/api/admin/kb/history-search", { body: { query } }),
   kbVerifyGet: ({ path, pendingId }) =>
     request(`/api/admin/kb/verify?${pendingId ? `pending_id=${encodeURIComponent(pendingId)}` : `path=${encodeURIComponent(path)}`}`),
-  kbVerifySave: ({ path, pendingId }, text) =>
-    request("/api/admin/kb/verify", { body: { path: path || null, pending_id: pendingId || null, text } }),
+  kbVerifySave: ({ path, pendingId }, text, { checked = [], baseAt = null, acceptWarnings = false } = {}) =>
+    request("/api/admin/kb/verify", { body: { path: path || null, pending_id: pendingId || null, text, checked,
+                                              base_at: baseAt, accept_warnings: acceptWarnings } }),
+  kbVerifyRecheck: ({ path, pendingId }) =>
+    request("/api/admin/kb/verify/recheck", { body: { path: path || null, pending_id: pendingId || null } }),
+  kbVerifyPageUrl: ({ path, pendingId }, page) =>
+    `/api/admin/kb/verify/page?page=${page}&${pendingId ? `pending_id=${encodeURIComponent(pendingId)}` : `path=${encodeURIComponent(path)}`}`,
   kbVerifyRemove: ({ path, pendingId }) =>
     request("/api/admin/kb/verify/remove", { body: { path: path || null, pending_id: pendingId || null } }),
   kbPendingFileUrl: (id) => `/api/admin/kb/pending/${encodeURIComponent(id)}/file`,

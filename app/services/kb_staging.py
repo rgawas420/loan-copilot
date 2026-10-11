@@ -317,9 +317,11 @@ def process(pid: str):
                            "detail": f"{t['passed']} of {t['total']} tests for {cands[0]['title']} find their expected answer"
                                      + (f"; {t['failed']} do not" if t["failed"] else "")})
     if image:
+        from app.services import ocr_review
+        ocr_review.start(row["sha"], path)              # page images, OCR confidence, second reading: in the background
         checks.append({"check": "Image-based", "ok": False, "warn": True,
                        "detail": "Read by OCR, which can misread rates, amounts and codes. Use “Verify text” to check "
-                                 "and correct them against the image before adding it."})
+                                 "the flagged values against the page images and correct them before adding it."})
     elif extraction == kb_verify.VERIFIED:
         v = kb_verify.get(row["sha"]) or {}
         checks.append({"check": "Image-based", "ok": True,

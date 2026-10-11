@@ -117,12 +117,25 @@ base tab manages that folder from the browser:
 - **Knowledge tests**: golden tests (RAG quality tab) whose expected document is this document must find their
   expected answer in the new version. If any fail, activation is refused until the admin chooses *Activate
   anyway* (recorded in the version note). The full golden run follows automatically after activation.
-- **Verified text for images and scanned PDFs** (`app/services/kb_verify.py`): documents read by OCR are marked
-  *OCR · not verified*. *Verify text* shows the original next to the OCR text and the figures to check; the
-  corrected (or typed / loaded .txt) text is saved for that file's content and used instead of the OCR output for
-  search, answers, previews and comparisons (the image stays the document's file). An uploaded image waits for
-  review until its text is verified; an image OCR cannot read can be rescued by typing its text. Removing the
-  verified text goes back to OCR. Chunks carry `extraction` = text / ocr / verified.
+- **Verified text for images and scanned PDFs** (`app/services/kb_verify.py`, checks in `app/services/ocr_review.py`):
+  documents read by OCR are marked *OCR · not verified*. *Verify text* shows each scanned page as the OCR saw it,
+  with the flagged text boxed on the image, and a checklist the admin must tick before saving: every page
+  ("I compared this page with the original"), OCR boxes below `OCR_LOW_CONFIDENCE` (0.85), boxes too uncertain to be
+  indexed at all, figures that look misread (letters run into a figure, as in "RO18.50%" for "ROI 8.50%"; O / I / l
+  inside numbers; percentages above 100; two decimal points), pages where OCR found no text, and every figure on
+  which OCR and an independent **second reading** by a vision model disagree. The second reader is
+  `OCR_SECOND_READER` = auto (OpenAI `gpt-5` when `OPENAI_API_KEY` is set, else Groq `VISION_MODEL`), openai, groq or
+  off; it reads at most `OCR_SECOND_READER_MAX_PAGES` pages per document (paid: one vision call per page, run once per
+  file content when an image upload is checked or the screen is first opened; *Run checks again* repeats it). Its
+  transcription can be used as a page's text (its Markdown tables become table rows, like a spreadsheet's).
+  Saving is refused while the checks run, while an item is unticked, while `[unreadable]` markers remain, if
+  suspicious figures were not accepted, and if someone else saved after the screen was opened. For a PDF with real
+  text pages, only its scanned pages are edited and replaced; for an image or a fully scanned PDF the verified text
+  replaces the whole extraction. The verified text is used for search, answers, previews and comparisons (the
+  original stays the document's file); every earlier verified text is kept in its history. An uploaded image waits
+  for review until its text is verified; an image OCR cannot read can be rescued by typing its text. Removing the
+  verified text goes back to OCR. Chunks carry `extraction` = text / ocr / verified. `OCR_REVIEW=false` turns the
+  checks off.
 - **Source priority** (*Details* > Source priority): each document has a source type (Official policy 100,
   Payout sheet 90, Rate sheet 90, Code book 85, Internal reference 70, Reference 50, Old document 30, FAQ 20),
   by default from its document type; admins can set the type or a custom priority (applies at once, no

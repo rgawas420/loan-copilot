@@ -424,33 +424,144 @@ const EXTRACTION = {
   verified: { label: "Verified text", cls: "ok", tip: "An admin checked the text; it is used instead of the OCR output." },
 };
 
-// Check the OCR text of an image-based document against the image, correct it and save it as verified text.
+// Check the OCR text of an image-based document against its page images, tick every flagged item, correct the text
+// and save it as verified text. The server flags low-confidence and dropped OCR boxes, suspicious figures, empty
+// pages and figures an independent second reading disagrees on; saving needs every item ticked.
 // target: { path } for a document in the knowledge base, or { pendingId, name } for an upload under review.
+const ITEM_KINDS = {
+  only_ocr: { label: "Readings differ", cls: "bad", tip: "In the OCR text, but the second reading does not have it" },
+  only_second: { label: "Readings differ", cls: "bad", tip: "In the second reading, but not in the OCR text" },
+  suspicious: { label: "Looks misread", cls: "bad", tip: "A figure shape OCR often gets wrong" },
+  dropped: { label: "Left out", cls: "bad", tip: "OCR was too unsure to put this in the text" },
+  low_confidence: { label: "Low confidence", cls: "warn", tip: "OCR was not sure of this text" },
+  empty_page: { label: "No text", cls: "warn", tip: "OCR found no text on this page" },
+  page_error: { label: "Not checked", cls: "bad", tip: "This page could not be checked automatically" },
+  page: { label: "Whole page", cls: "info", tip: "Confirm you compared the whole page with the original" },
+};
+const headsOf = (text) => [...text.matchAll(/^=== (.{1,80}?) ===[ \t]*$/gm)];
+
+// The edited text split into sections: [{ label, body }] (label null for text before the first header).
+function sections(text) {
+  const heads = headsOf(text);
+  if (!heads.length) return [{ label: null, body: text.trim() }];
+  const out = [];
+  const lead = text.slice(0, heads[0].index).trim();
+  if (lead) out.push({ label: null, body: lead });
+  heads.forEach((m, i) => out.push({ label: m[1].trim(),
+    body: text.slice(m.index + m[0].length, i + 1 < heads.length ? heads[i + 1].index : text.length).trim() }));
+  return out;
+}
+const pageNo = (label) => Number((/^Page (\d+)$/.exec(label || "") || [])[1] || 0);
+
+// Replace (or insert, in page order) one page's section of the edited text.
+function withPage(text, label, body, single) {
+  if (single) return body;
+  const secs = sections(text).filter((s) => s.label !== null || s.body);
+  const at = secs.findIndex((s) => s.label === label);
+  if (at >= 0) secs[at] = { label, body };
+  else {
+    const after = secs.findIndex((s) => pageNo(s.label) > pageNo(label));
+    secs.splice(after < 0 ? secs.length : after, 0, { label, body });
+  }
+  return secs.map((s) => (s.label === null ? s.body : `=== ${s.label} ===\n${s.body}`)).join("\n\n");
+}
+
+function PageView({ url, page, items, selected, onSelect, showAll }) {
+  const flagged = new Map(items.filter((it) => it.box != null).map((it) => [it.box, it]));
+  return (
+    <div className="page-view">
+      <img src={url} alt={`${page.label} of the original`} />
+      {page.width > 0 && (
+        <svg viewBox={`0 0 ${page.width} ${page.height}`} preserveAspectRatio="none" aria-hidden="true">
+          {page.boxes.map((b, i) => {
+            const it = flagged.get(i);
+            if (!it && !showAll) return null;
+            const [x0, y0, x1, y1] = b.box;
+            const cls = it ? `box ${ITEM_KINDS[it.kind]?.cls || "warn"}${selected === it.id ? " sel" : ""}` : "box plain";
+            return <rect key={i} className={cls} x={x0 - 3} y={y0 - 3} width={x1 - x0 + 6} height={y1 - y0 + 6}
+                         onClick={it ? () => onSelect(it.id) : undefined}><title>{`${b.text} · ${Math.round(b.conf * 100)}%`}</title></rect>;
+          })}
+        </svg>
+      )}
+    </div>
+  );
+}
+
 function VerifyDialog({ target, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [text, setText] = useState("");
+  const [checked, setChecked] = useState(() => new Set());
+  const [pageIdx, setPageIdx] = useState(0);
+  const [selected, setSelected] = useState(null);
+  const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState("");
+  const [problem, setProblem] = useState(null);      // { code, message, warnings? } from a refused save
   const [saved, setSaved] = useState(null);
   const [busy, setBusy] = useState(false);
   const ref = useRef(null);
+  const baseAt = useRef(null);                       // verified-at when the text was loaded (stale-save guard)
   const name = target.name || target.path;
   const fileUrl = target.pendingId ? api.kbPendingFileUrl(target.pendingId) : api.kbDownloadUrl(target.path);
   useEffect(() => { const d = ref.current; d?.showModal(); return () => d?.close(); }, []);
-  useEffect(() => {
-    api.kbVerifyGet(target).then((r) => { setData(r); setText(r.text); }).catch((e) => setError(e.message));
-  }, [target]);
 
-  async function save() {
-    setBusy(true); setError("");
-    try { setSaved(await api.kbVerifySave(target, text)); onSaved(); }
-    catch (e) { setError(e.message); }
-    finally { setBusy(false); }
+  const served = useRef("");                         // the text the server last sent (to tell untouched edits)
+  const load = useCallback((first) => api.kbVerifyGet(target).then((r) => {
+    setData(r);
+    if (first) baseAt.current = r.verified?.at || null;
+    // First load, or the file was extracted while its checks ran: show the new text unless the admin edited it.
+    setText((t) => (first || t === served.current ? r.text : t));
+    served.current = r.text;
+  }).catch((e) => setError(e.message)), [target]);
+  useEffect(() => { load(true); }, [load]);
+  const running = data?.review.status === "RUNNING";
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(() => load(false), 2000);
+    return () => clearInterval(t);
+  }, [running, load]);
+
+  const review = data?.review;
+  const pages = review?.pages || [];
+  const page = pages[Math.min(pageIdx, pages.length - 1)];
+  const items = review?.items || [];
+  const pageItems = page ? items.filter((it) => it.page === page.page) : [];
+  const open = items.filter((it) => !checked.has(it.id));
+  const single = !!data && data.scope !== "pages" && pages.length <= 1 && headsOf(text).length === 0;
+
+  const toggle = (id) => setChecked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const tickPage = () => setChecked((s) => new Set([...s, ...pageItems.map((it) => it.id)]));
+  function select(id) {
+    setSelected(id);
+    document.getElementById(`vf-item-${id}`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  async function save(acceptWarnings = false) {
+    setBusy(true); setError(""); setProblem(null);
+    try {
+      const r = await api.kbVerifySave(target, text, { checked: [...checked], baseAt: baseAt.current, acceptWarnings });
+      setSaved(r); onSaved();
+      const fresh = await api.kbVerifyGet(target);
+      setData(fresh); baseAt.current = fresh.verified?.at || null; served.current = fresh.text;
+    } catch (e) {
+      if (e.data?.code) setProblem({ ...e.data, message: e.message });
+      else setError(e.message);
+      if (e.data?.code === "unchecked") {
+        const first = items.find((it) => e.data.items.includes(it.id));
+        if (first) { setPageIdx(Math.max(0, pages.findIndex((p) => p.page === first.page))); select(first.id); }
+      }
+    } finally { setBusy(false); }
   }
   async function unverify() {
     setBusy(true); setError("");
     try { await api.kbVerifyRemove(target); onSaved(); onClose(); }
     catch (e) { setError(e.message); setBusy(false); }
   }
+  async function recheck() {
+    setError("");
+    try { await api.kbVerifyRecheck(target); setChecked(new Set()); load(false); }
+    catch (e) { setError(e.message); }
+  }
+  async function reload() { setProblem(null); setSaved(null); setChecked(new Set()); await load(true); }
   async function loadFile(e) {
     const f = e.target.files?.[0];
     e.target.value = "";
@@ -458,37 +569,111 @@ function VerifyDialog({ target, onClose, onSaved }) {
   }
 
   return (
-    <dialog ref={ref} className="dialog wide" onClose={onClose} onCancel={onClose} aria-labelledby="vf-title">
+    <dialog ref={ref} className="dialog wide verify" onClose={onClose} onCancel={onClose} aria-labelledby="vf-title">
       <div className="dialog-body">
         <div className="dialog-head">
           <h2 id="vf-title" title={name}>Verify text · {name.split("/").pop()}</h2>
           <button className="icon-btn" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
         </div>
-        <p className="hint">OCR can misread rates, amounts, PIN codes and codes. Check the text against the original, correct it and
-          save: the verified text is then used for answers instead of the OCR output. Keep “=== Page N ===” lines to keep page numbers.</p>
+        <p className="hint">Check each flagged item against the page image and tick it, correct the text, then save. The verified
+          text is then used for answers instead of the OCR output.{data?.scope === "pages"
+            ? " Only the scanned pages of this PDF are edited here; its other pages keep their own text."
+            : ""} Keep the “=== Page N ===” lines so page numbers are kept. Markdown tables become table rows.</p>
         {!data && !error && <p className="muted">Loading…</p>}
         {error && <p className="err" role="alert">{error}</p>}
         {data && (
           <div className="verify-grid">
             <div className="verify-original">
-              {isImage(name) ? <a href={fileUrl} target="_blank" rel="noreferrer"><img src={fileUrl} alt={`Original: ${name}`} /></a>
+              {pages.length > 1 && (
+                <div className="page-tabs" role="tablist" aria-label="Pages">
+                  {pages.map((p, i) => {
+                    const left = items.filter((it) => it.page === p.page && !checked.has(it.id)).length;
+                    return <button key={p.page} role="tab" aria-selected={i === pageIdx} className={`chip${i === pageIdx ? " on" : ""}`}
+                                   onClick={() => setPageIdx(i)}>{p.label}{left > 0 && <span className="count">{left}</span>}</button>;
+                  })}
+                </div>
+              )}
+              {page && !page.error
+                ? <PageView url={api.kbVerifyPageUrl(target, page.page)} page={page} items={pageItems} selected={selected}
+                            onSelect={select} showAll={showAll} />
+                : isImage(name) ? <div className="page-view"><img src={fileUrl} alt={`Original: ${name}`} /></div>
                 : <p><a className="link" href={fileUrl} target="_blank" rel="noreferrer">Open the original file</a></p>}
+              <div className="row-gap small">
+                {page?.boxes.length > 0 && <label className="check-inline"><input type="checkbox" checked={showAll}
+                  onChange={(e) => setShowAll(e.target.checked)} /> Show every OCR box</label>}
+                <a className="link" href={fileUrl} target="_blank" rel="noreferrer">Original file</a>
+              </div>
             </div>
             <div className="verify-edit">
               {data.verified
-                ? <p className="ok-text small">Verified by {data.verified.by} · {when(data.verified.at)}</p>
+                ? <p className="ok-text small">Verified by {data.verified.by} · {when(data.verified.at)}
+                    {data.verified.checked?.items ? ` · ${data.verified.checked.items} flagged item(s) checked` : ""}</p>
                 : !data.ocr_available && <p className="hint">OCR could not read this file. Type or paste its text, or load it from a .txt file.</p>}
-              {data.figures.length > 0 && (
-                <div className="fig-check">
-                  <span className="muted small">Check these values from the OCR against the original:</span>
-                  <p>{data.figures.map((f, i) => <code key={i}>{f}</code>)}</p>
+
+              <div className={`review-status ${running ? "info" : review.status === "FAILED" ? "bad" : open.length ? "warn" : "ok"}`} role="status">
+                <span>
+                  {running ? <><span className="spinner" aria-hidden="true" /> Checking the pages{review.reader ? ` (second reading by ${review.reader})` : ""}…</>
+                    : review.status === "FAILED" ? <>The checks failed: {review.error}. Check the whole text against the original.</>
+                    : review.status === "OFF" ? <>Automatic checks are off. Check the whole text against the original.</>
+                    : items.length === 0 ? <>No flagged items.{review.reader ? ` OCR and the second reading (${review.reader}) agree on every figure.` : ""}</>
+                    : <>{items.length - open.length} of {items.length} flagged items checked</>}
+                </span>
+                {!running && review.status !== "OFF" && <button className="link small" onClick={recheck}>Run checks again</button>}
+              </div>
+              {review.status === "READY" && !review.reader && (
+                <p className="hint small">No second reader is configured, so figures are not cross-checked. Set OPENAI_API_KEY
+                  (or VISION_MODEL on Groq) and run the checks again.</p>
+              )}
+              {page?.second_error && <p className="hint small">Second reading of {page.label}: {page.second_error}</p>}
+
+              {pageItems.length > 0 && (
+                <div className="review-items">
+                  <div className="row-gap small">
+                    <b>{page.label}: {pageItems.filter((it) => !checked.has(it.id)).length} to check</b>
+                    <button className="link small" onClick={tickPage}>I checked all of these</button>
+                  </div>
+                  <ul>
+                    {pageItems.map((it) => {
+                      const k = ITEM_KINDS[it.kind] || { label: it.kind, cls: "warn" };
+                      return (
+                        <li key={it.id} id={`vf-item-${it.id}`} className={`${selected === it.id ? "sel" : ""}${checked.has(it.id) ? " done" : ""}`}>
+                          <input type="checkbox" aria-label={`Checked: ${it.text}`} checked={checked.has(it.id)} onChange={() => toggle(it.id)} />
+                          <button className="review-item" onClick={() => setSelected(it.id)}>
+                            <span className={`tag ${k.cls}`} title={k.tip}>{k.label}</span> <code>{it.text}</code>
+                            <span className="muted small"> {it.detail}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
               )}
+
+              {page?.second != null && (
+                <details className="second-reading">
+                  <summary>Second reading of {page.label}{review.reader ? ` (${review.reader})` : ""}</summary>
+                  <pre>{page.second}</pre>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setText((t) => withPage(t, page.label, page.second, single))}>
+                    Use it as the text of {single ? "this file" : page.label}</button>
+                </details>
+              )}
+
               <label className="sr-only" htmlFor="vf-text">Verified text</label>
               <textarea id="vf-text" className="verify-text" value={text} spellCheck={false} onChange={(e) => setText(e.target.value)} />
+
+              {problem && (
+                <div className={`review-problem ${problem.code === "warnings" ? "warn" : "bad"}`} role="alert">
+                  <p>{problem.message}</p>
+                  {problem.warnings?.length > 0 && <ul>{problem.warnings.map((w, i) => <li key={i}><code>{w.text}</code> {w.detail}</li>)}</ul>}
+                  {problem.code === "warnings" && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => save(true)}>These are correct: save anyway</button>}
+                  {problem.code === "conflict" && <button className="btn btn-ghost btn-sm" onClick={reload}>Reload (your edits are lost)</button>}
+                </div>
+              )}
               <div className="row-gap">
-                <button className="btn btn-primary btn-sm" disabled={busy || !text.trim()} onClick={save}>{busy ? "Saving…" : "Save verified text"}</button>
-                <label className="btn btn-ghost btn-sm">Load from .txt<input type="file" accept=".txt,text/plain" hidden onChange={loadFile} /></label>
+                <button className="btn btn-primary btn-sm" disabled={busy || running || !text.trim() || open.length > 0}
+                        title={open.length ? `${open.length} flagged item(s) still to check` : undefined} onClick={() => save(false)}>
+                  {busy ? "Saving…" : open.length ? `Save verified text (${open.length} to check)` : "Save verified text"}</button>
+                <label className="btn btn-ghost btn-sm">Load from .txt<input type="file" accept=".txt,.md,text/plain" hidden onChange={loadFile} /></label>
                 {data.ocr_available && text !== data.ocr_text && <button className="btn btn-ghost btn-sm" onClick={() => setText(data.ocr_text)}>Reset to OCR text</button>}
                 {data.verified && <button className="btn btn-ghost btn-sm danger-text" disabled={busy} onClick={unverify}>Remove verified text</button>}
               </div>
@@ -502,6 +687,17 @@ function VerifyDialog({ target, onClose, onSaved }) {
                     </div>
                   ) : <p className="hint">No figures changed from the OCR text.</p>}
                 </div>
+              )}
+              {data.history.length > 0 && (
+                <details>
+                  <summary className="small">Earlier verified texts ({data.history.length})</summary>
+                  <ul className="row-list small">
+                    {data.history.map((h, i) => (
+                      <li key={i}>{h.action === "removed" ? "Removed" : "Replaced"} by {h.replaced_by || "—"} · {when(h.replaced_at)}
+                        <span className="muted"> (verified by {h.by} · {when(h.at)}{h.changes?.added?.length ? `; set ${h.changes.added.join(", ")}` : ""})</span></li>
+                    ))}
+                  </ul>
+                </details>
               )}
             </div>
           </div>

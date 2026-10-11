@@ -3,7 +3,7 @@ versions, rollback and merging duplicates)."""
 import json
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -261,20 +261,25 @@ class VerifyIn(BaseModel):
     path: Optional[str] = Field(default=None, max_length=1000)          # a document in the knowledge base...
     pending_id: Optional[str] = Field(default=None, max_length=40)      # ...or an upload waiting for review
     text: str = Field(default="", max_length=2_000_000)
+    checked: List[str] = Field(default_factory=list, max_length=20_000)  # ids of the flagged items the admin ticked
+    base_at: Optional[str] = Field(default=None, max_length=40)         # verified-at when the screen was opened
+    accept_warnings: bool = False                                       # save despite suspicious figures
 
 
 def _verify_target(path: Optional[str], pending_id: Optional[str]):
-    """(content sha, display name) of the file whose text is verified."""
+    """(content sha, display name, file) of the file whose text is verified."""
+    from pathlib import Path as _P
     if pending_id:
         row = kb_staging._get(pending_id)
         if row is None:
             raise HTTPException(404, "Upload not found.")
         if row["status"] not in kb_staging.OPEN:
             raise HTTPException(409, "This upload has already been decided.")
-        return row["sha"], row["name"]
+        return row["sha"], row["name"], _P(row["stored"])
     if path:
         from app.services import knowledge_base as kb
-        return kb._hash_file(_call(kb_admin.file_path, path)), path
+        f = _call(kb_admin.file_path, path)
+        return kb._hash_file(f), path, f
     raise HTTPException(400, "Give the document or the upload.")
 
 
@@ -287,31 +292,68 @@ def _after_verify(path: Optional[str], pending_id: Optional[str], by: str):
 
 @router.get("/verify")
 def kb_verify_get(path: Optional[str] = None, pending_id: Optional[str] = None, _=Depends(admin_user)):
-    """The OCR text of an image-based document (or its verified text), with the figures to check."""
-    sha, name = _verify_target(path, pending_id)
-    return {**kb_verify.editor(sha, name), "path": path, "pending_id": pending_id}
+    """The OCR text of an image-based document (or its verified text), the checks to tick (started in the
+    background if they have not run: poll until review.status is READY), and the earlier verified texts."""
+    sha, name, f = _verify_target(path, pending_id)
+    return {**kb_verify.editor(sha, name, f), "path": path, "pending_id": pending_id}
+
+
+@router.get("/verify/page")
+def kb_verify_page(page: int = Query(ge=0, le=100_000), path: Optional[str] = None, pending_id: Optional[str] = None,
+                   _=Depends(admin_user)):
+    """One page as the OCR saw it (PNG): page 0 is an image file, 1.. the pages of a PDF."""
+    from app.services import ocr_review
+    sha, _name, f = _verify_target(path, pending_id)
+    try:
+        data = ocr_review.page_image(sha, f, page)
+    except Exception as e:
+        raise HTTPException(404, f"This page cannot be shown ({type(e).__name__}).")
+    return Response(data, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@router.post("/verify/recheck")
+def kb_verify_recheck(body: VerifyIn, admin=Depends(admin_user)):
+    """Run the checks again (e.g. after the second reader was configured or failed)."""
+    from app.services import ocr_review
+    sha, name, f = _verify_target(body.path, body.pending_id)
+    if not get_settings().ocr_review:
+        raise HTTPException(400, "OCR checks are turned off (OCR_REVIEW=false).")
+    cur = ocr_review.get(sha)
+    if cur and cur["status"] == ocr_review.RUNNING:
+        raise HTTPException(409, "The checks of this file are already running.")
+    ocr_review.start(sha, f, force=True)
+    kb_audit.record("verify", admin["email"], name, detail="checks run again")
+    return {"started": True}
 
 
 @router.post("/verify")
 def kb_verify_save(body: VerifyIn, admin=Depends(admin_user)):
     """Save the admin's checked / corrected text; it replaces the OCR output for this file from now on."""
-    sha, name = _verify_target(body.path, body.pending_id)
-    res = _call(kb_verify.save, sha, body.text, admin["email"])
+    sha, name, _f = _verify_target(body.path, body.pending_id)
+    res = _call(kb_verify.save, sha, body.text, admin["email"], checked=body.checked,
+                base_at=body.base_at if "base_at" in body.model_fields_set else False,
+                accept_warnings=body.accept_warnings or "accept_warnings" not in body.model_fields_set)
     _after_verify(body.path, body.pending_id, admin["email"])
-    ch = res["changes"]
+    ch, ck = res["changes"], res["checked"]
     accounts.log(admin["id"], "kb_text_verified", f"{name}: {len(ch['removed'])} figure(s) corrected, "
                                                    f"{len(ch['added'])} added"[:300])
-    kb_audit.record("verify", admin["email"], name if body.path else f"{name} (upload)",
-                    detail=(f"corrected {', '.join(ch['removed'])} → {', '.join(ch['added'])}" if ch["removed"] or ch["added"]
-                            else "OCR text confirmed, no figures changed"))
+    detail = (f"corrected {', '.join(ch['removed'])} → {', '.join(ch['added'])}" if ch["removed"] or ch["added"]
+              else "OCR text confirmed, no figures changed")
+    if ck["items"]:
+        detail += f"; {ck['checked']} flagged item(s) checked"
+    if ck["warnings_accepted"]:
+        detail += f"; saved despite {', '.join(ck['warnings_accepted'][:10])}"
+    if res["scope"] == kb_verify.PAGES:
+        detail += "; scanned pages only"
+    kb_audit.record("verify", admin["email"], name if body.path else f"{name} (upload)", detail=detail[:1000])
     return {**res, "reindexing": True}
 
 
 @router.post("/verify/remove")
 def kb_verify_remove(body: VerifyIn, admin=Depends(admin_user)):
-    """Go back to the OCR output for this file."""
-    sha, name = _verify_target(body.path, body.pending_id)
-    if not kb_verify.remove(sha):
+    """Go back to the OCR output for this file (the removed text stays in the verification history)."""
+    sha, name, _f = _verify_target(body.path, body.pending_id)
+    if not kb_verify.remove(sha, admin["email"]):
         raise HTTPException(404, "This file has no verified text.")
     _after_verify(body.path, body.pending_id, admin["email"])
     accounts.log(admin["id"], "kb_text_unverified", name[:300])

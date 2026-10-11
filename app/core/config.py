@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     kb_upload_max_mb: int = 50                           # largest file an admin can upload in the browser
     kb_vector_max_chunks: int = 5000                     # bigger files (huge lists) go to the keyword index only
     ocr_enabled: bool = True                             # OCR for images and scanned PDF pages
+    # Verifying OCR text (Knowledge base > Verify text): an independent second reading of each image / scanned page
+    # by a vision model, compared figure by figure with the OCR. "auto" = OpenAI when OPENAI_API_KEY is set, else
+    # Groq when VISION_MODEL is set; "openai" / "groq" force one; "off" = OCR confidence and checks only.
+    ocr_review: bool = True                              # check OCR'd pages before they can be verified
+    ocr_second_reader: str = "auto"
+    ocr_second_reader_model: str = ""                    # empty = gpt-5 (OpenAI) / VISION_MODEL (Groq)
+    ocr_second_reader_max_pages: int = 40                # pages per document read a second time (cost cap)
+    ocr_low_confidence: float = 0.85                     # OCR boxes below this are listed for checking
     kb_dir: Path = BASE_DIR / "data" / "sample_kb"       # free-text policy sheets (retrieval evidence)
     policy_dir: Path = BASE_DIR / "data" / "policies"    # structured policy rules (YAML, used by the rules engine)
     upload_dir: Path = BASE_DIR / "uploads"

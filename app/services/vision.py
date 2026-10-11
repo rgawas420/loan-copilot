@@ -47,6 +47,59 @@ def _prepare(data: bytes) -> tuple:
     return base64.b64encode(buf.getvalue()).decode(), "image/jpeg"
 
 
+SECOND_READING_PROMPT = """Transcribe this scanned page of a bank loan document (policy, rate sheet, payout sheet or
+poster) so that a person can check another program's reading of it.
+
+- Transcribe ALL the text exactly as written: names, numbers, amounts, percentages, dates, codes, PIN codes, phone
+  numbers. Do not correct, round, convert, summarise or translate anything.
+- Keep the reading order. On a multi-column poster, finish one column or panel before the next.
+- Render every table as a Markdown table, keeping each value in its own row and column. Use Markdown headings for
+  titles and bullet lists for lists.
+- If a character or value cannot be read with certainty, write [unreadable] in its place. Never guess a figure.
+
+Output only the transcription in Markdown, without code fences and without any comment."""
+
+
+def second_reader():
+    """(LangChain chat model, its name) for second readings of OCR'd pages, or (None, "") when not configured."""
+    from app.core.config import get_settings
+    from app.rag import llm as L
+    s = get_settings()
+    choice = (s.ocr_second_reader or "auto").lower()
+    if choice == "off":
+        return None, ""
+    if choice == "openai" or (choice == "auto" and s.openai_api_key):
+        if not s.openai_api_key:
+            return None, ""
+        model = s.ocr_second_reader_model or "gpt-5"
+        params = {"model": model, "max_tokens": 16000, "timeout": max(s.llm_timeout_s, 180)}
+        if model.startswith(("gpt-5", "o")):
+            params["reasoning_effort"] = "medium"
+        return L._build_openai(L._freeze(params)), model
+    if choice in ("groq", "auto") and s.groq_api_key and (s.ocr_second_reader_model or s.vision_model):
+        model = s.ocr_second_reader_model or s.vision_model
+        return L._build(L._freeze({"model": model, "temperature": 0, "max_tokens": 6000})), model
+    return None, ""
+
+
+def second_reading(data: bytes) -> Optional[str]:
+    """An independent Markdown transcription of a page image, or None when no reader is configured. Raises when
+    the call fails (the caller records the error)."""
+    llm, _ = second_reader()
+    if llm is None:
+        return None
+    from langchain_core.messages import HumanMessage
+    from app.rag.metering import purpose
+    b64, mime = _prepare(data)
+    msg = HumanMessage(content=[{"type": "text", "text": SECOND_READING_PROMPT},
+                                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}])
+    with purpose("ocr_review"):
+        text = (llm.invoke([msg]).content or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`").removeprefix("markdown").strip()
+    return text
+
+
 def available() -> bool:
     from app.core.config import get_settings
     s = get_settings()
