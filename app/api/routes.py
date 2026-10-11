@@ -264,12 +264,16 @@ def _sse(kind: str, payload) -> str:
     return f"event: {kind}\ndata: {json.dumps(payload, default=str, ensure_ascii=False)}\n\n"
 
 
-def _sponsored(user, body, answer: str):
+def _sponsored(user, body, answer: str, state: str = ""):
     """A sponsored card after a knowledge-base answer (see app/services/ads.py). Never after a follow-up about a
-    recommendation, a continued answer, or a "not found" reply; an ad problem never affects the answer."""
+    recommendation, a continued answer, a "not found" reply or anything but an answer (a failed search, a
+    clarifying question); an ad problem never affects the answer."""
     from app.rag.grounding import is_not_found
-    from app.rag import smalltalk
+    from app.rag import smalltalk, states
     if body.mode != "kb" or body.partial or not answer.strip() or is_not_found(answer) or smalltalk.kind(body.question):
+        return None
+    if state and state not in (states.ANSWER_VERIFIED, states.ANSWER_PARTIALLY_VERIFIED, states.SOURCE_CONFLICT,
+                               states.STALE_SOURCE, states.ALTERNATIVE_RESULTS_FOUND):
         return None
     try:
         from app.services import ads
@@ -294,7 +298,7 @@ def chat_stream(body: ChatStreamIn, user=Depends(current_user)):
     res = _reserve(user, "chat", chars, body.conversation_id, body.message_id, needs_rag=True)
 
     def events():
-        wrote, status, answer = False, "stopped", []
+        wrote, status, answer, state = False, "stopped", [], ""
         from app.services import rag_debug
         rag_debug.message_link.set((body.conversation_id, body.message_id))   # copied into the bound context below
         gen = metering.bind(metering.Meter(res), stream(
@@ -309,9 +313,11 @@ def chat_stream(body: ChatStreamIn, user=Depends(current_user)):
                     answer[:] = [payload]
                 if kind == "sources":             # internal documents: admins only (own uploads stay visible)
                     payload = source_policy.sources_for(user, payload)
+                if kind == "state":
+                    state = payload.get("state", "")
                 yield _sse(kind, payload)
             status = "completed"
-            ad = _sponsored(user, body, "".join(answer))
+            ad = _sponsored(user, body, "".join(answer), state)
             if ad:
                 yield _sse("ad", ad)
             yield _sse("usage", _usage_event(res, usage.settle(res, status)))
@@ -320,16 +326,19 @@ def chat_stream(body: ChatStreamIn, user=Depends(current_user)):
                       "streamed" + (f", {len(files)} attachment(s)" if files else ""))
         except RuntimeError as e:
             status = "failed"
-            yield _sse("error", {"message": str(e), "partial": wrote})
+            from app.rag import states
+            yield _sse("error", {"message": str(e), "partial": wrote, "state": states.for_error(e)})
         except Exception as e:
             status = "failed"
-            from app.rag.llm import is_rate_limit, rate_limit_message
-            if is_rate_limit(e):
+            from app.rag import states
+            from app.rag.llm import rate_limit_message
+            st = states.for_error(e)          # never reported as "not found"
+            if st == states.RATE_LIMITED:
                 log.warning("Chat stream stopped by the AI provider's rate limit: %s", str(e)[:300])
-                yield _sse("error", {"message": rate_limit_message(e), "partial": wrote, "code": "rate_limited"})
+                yield _sse("error", {"message": rate_limit_message(e), "partial": wrote, "code": "rate_limited", "state": st})
             else:
-                log.exception("Chat stream failed")
-                yield _sse("error", {"message": f"Could not finish the answer ({type(e).__name__}). Try again.", "partial": wrote})
+                log.exception("Chat stream failed (%s)", st)
+                yield _sse("error", {"message": states.ERROR_MESSAGES[st], "partial": wrote, "state": st})
         finally:
             gen.close()                       # a stopped answer records its (estimated) usage before release
             usage.settle(res, status)

@@ -91,7 +91,8 @@ def config() -> dict:
     s = get_settings()
     return {**describe_params(rag_params()),
             "system_prompt_version": grounding.PROMPT_VERSION, "rewrite_model": model_for("fast"),
-            "query_rewrite": s.rag_query_rewrite, "live_check": s.live_check, "embedding_model": s.embedding_model,
+            "query_rewrite": s.rag_query_rewrite, "live_check": s.live_check, "followup_router": s.chat_followup_router,
+            "embedding_model": s.embedding_model,
             "reranker": s.reranker, "reranker_in_use": rerank.describe(), "candidates": s.rag_candidates,
             "top_k": s.rag_top_k, "min_relevance": s.rag_min_relevance, "chunker_version": CHUNKER_VERSION,
             "retrieval_version": retrieval.RETRIEVAL_VERSION,

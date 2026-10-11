@@ -14,6 +14,7 @@
 Every step's inputs, scores and decisions are kept on the Retrieval object, so an admin can see exactly why
 a passage was or was not used (see app/services/rag_debug.py).
 """
+import contextvars
 import hashlib
 import logging
 import re
@@ -30,7 +31,7 @@ from app.rag import entities, rerank
 from app.rag.entities import METRICS, VALUE_PATTERNS
 
 log = logging.getLogger(__name__)
-RETRIEVAL_VERSION = "hybrid-rerank-v2"
+RETRIEVAL_VERSION = "hybrid-rerank-v3"      # v3: one longer retry when the vector search failed
 RRF_K = 60
 WEIGHTS = {"vector": 1.0, "lexical": 1.0, "exact": 2.0}
 PER_DOCUMENT_CAP = 4                  # passages from one document in the final context
@@ -41,6 +42,7 @@ OLDER_EDITION_PENALTY = 0.04         # a newer edition of the same document (e.g
 TYPE_FOR_METRIC = {"payout": {"Payout"}, "code": {"Codes"}, "contact": {"Contacts"}, "pincode": {"Pincode list"},
                    "roi": {"Rate sheet", "Policy"}, "eligibility": {"Policy", "Eligibility"}}
 MAX_HISTORY_TURNS = 4
+RECOVERY_TIMEOUT_SCALE = 3           # the recovery search waits this many times VECTOR_TIMEOUT_S
 SUPPORTING_CANDIDATES = 10           # candidates reranked when passages only support a directory / lookup answer
 
 
@@ -252,8 +254,9 @@ def vector_hits(query: str, k: int, loan_type: Optional[str], banks: Optional[Li
     types = [loan_type, "Unknown"] if loan_type else None
     if v.is_pinecone():                  # two network round-trips: run them side by side
         with ThreadPoolExecutor(2) as pool:
-            primary = pool.submit(v._scored, vs, query, k, {"corpus": CORPUS})
-            others = pool.submit(v._scored, vs, query, max(3, k // 3), {"loan_type": {"$in": types}} if types else None)
+            primary = pool.submit(contextvars.copy_context().run, v._scored, vs, query, k, {"corpus": CORPUS})
+            others = pool.submit(contextvars.copy_context().run, v._scored, vs, query, max(3, k // 3),
+                                 {"loan_type": {"$in": types}} if types else None)
             primary, others = primary.result(), others.result()
     else:
         primary = v._scored(vs, query, k, lambda d: d.metadata.get("corpus") == CORPUS)
@@ -276,6 +279,7 @@ def keyword_hits(query: str, k: int, exact: bool) -> List[Document]:
 
 def gather(plan: Plan, k: int) -> Dict[str, Candidate]:
     """Run every query through vector, BM25 and exact-term search and fuse the ranked lists (RRF)."""
+    from app.rag import vectorstore as vstore
     cands: Dict[str, Candidate] = {}
 
     def add(kind: str, rank: int, d: Document, score: Optional[float]):
@@ -300,6 +304,7 @@ def gather(plan: Plan, k: int) -> Dict[str, Candidate]:
             return vector_hits(q, k, plan.loan_type)
         except Exception:
             log.exception("Vector search failed")
+            vstore.note_issue("error")
             return []
 
     def scoped(q):
@@ -307,12 +312,13 @@ def gather(plan: Plan, k: int) -> Dict[str, Candidate]:
             return vector_hits(q, max(4, k // 2), plan.loan_type, banks=plan.banks)
         except Exception:
             log.debug("Bank-scoped vector search failed", exc_info=True)
+            vstore.note_issue("error")
             return []
 
     queries = list(plan.queries)
     with ThreadPoolExecutor(max(1, min(4, len(queries) + 1))) as pool:   # each query is a vector-store round-trip
-        vectors = list(pool.map(vector, queries))
-        banked = pool.submit(scoped, queries[0]) if plan.banks and queries else None
+        vectors = [f.result() for f in [pool.submit(contextvars.copy_context().run, vector, q) for q in queries]]
+        banked = pool.submit(contextvars.copy_context().run, scoped, queries[0]) if plan.banks and queries else None
         banked = banked.result() if banked else []
     for q, hits in zip(queries, vectors):
         for rank, (d, s) in enumerate(hits):
@@ -514,6 +520,7 @@ class Retrieval:
     validation: dict
     passes: List[dict]
     timings: Dict[str, float]
+    degraded: List[str] = field(default_factory=list)     # vector searches that timed out / failed (final pass)
 
     @property
     def docs(self) -> List[Document]:
@@ -522,7 +529,7 @@ class Retrieval:
     def trace(self) -> dict:
         return {"plan": self.plan.to_dict(), "passes": self.passes, "validation": self.validation,
                 "candidates": [c.view() for c in sorted(self.candidates, key=lambda c: (not c.selected, bool(c.dropped), -c.score, -c.fused))][:60],
-                "selected": [c.key for c in self.selected], "timings": self.timings,
+                "selected": [c.key for c in self.selected], "timings": self.timings, "degraded": self.degraded,
                 "version": RETRIEVAL_VERSION}
 
 
@@ -544,13 +551,39 @@ def retrieve(question: str, history: Optional[list] = None, loan_type: Optional[
     """supporting: the answer comes from elsewhere (the banker directory, a table lookup) and passages are only
     supporting evidence: a smaller candidate pool and no second, wider pass (it cost up to 40 s on the live
     index for nothing)."""
+    from app.rag import vectorstore as vstore
     s = get_settings()
     t0 = time.perf_counter()
     plan = plan or understand(question, history, loan_type, use_llm)
     t_plan = time.perf_counter() - t0
     k = min(s.rag_candidates, SUPPORTING_CANDIDATES) if supporting else s.rag_candidates
-    cands, selected, val, info = _run_pass(plan, k, bank_filter=True)
-    passes = [{"pass": 1, **info, "sufficient": val["sufficient"], **({"supporting": True} if supporting else {})}]
+    token = vstore.issues.set([])
+    try:
+        cands, selected, val, info = _run_pass(plan, k, bank_filter=True)
+        passes = [{"pass": 1, **info, "sufficient": val["sufficient"], **({"supporting": True} if supporting else {}),
+                   **({"vector_issues": list(vstore.issues.get())} if vstore.issues.get() else {})}]
+        if not val["sufficient"] and not supporting and vstore.issues.get():
+            # The vector search timed out or failed: before calling anything "not found", search again once with
+            # a longer time limit (an outage must not look like missing information).
+            vstore.issues.set([])
+            scale = vstore.timeout_scale.set(RECOVERY_TIMEOUT_SCALE)
+            try:
+                cands, selected, val, info = _run_pass(plan, k, bank_filter=True)
+            finally:
+                vstore.timeout_scale.reset(scale)
+            passes.append({"pass": "recovery", **info, "sufficient": val["sufficient"], "why": "vector search failed",
+                           **({"vector_issues": list(vstore.issues.get())} if vstore.issues.get() else {})})
+        cands, selected, val, passes = _widen(plan, s, supporting, cands, selected, val, passes)
+        degraded = list(vstore.issues.get())
+    finally:
+        vstore.issues.reset(token)
+    timings = {"understand_s": round(t_plan, 3), "total_s": round(time.perf_counter() - t0, 3)}
+    return Retrieval(plan=plan, candidates=list(cands.values()), selected=selected, validation=val,
+                     passes=passes, timings=timings, degraded=degraded)
+
+
+def _widen(plan: Plan, s, supporting: bool, cands, selected, val, passes):
+    """The second, wider pass for a question without enough evidence."""
     if not val["sufficient"] and not supporting:
         # Expand once: more candidates, a broader entity + fact query, the original wording, no bank filter.
         broad = " ".join(plan.banks + plan.products + [_metric_phrase(plan.metrics)]).strip()
@@ -558,6 +591,4 @@ def retrieve(question: str, history: Optional[list] = None, loan_type: Optional[
         c2, sel2, val2, info2 = _run_pass(wider, s.rag_candidates * 2, bank_filter=False)
         passes.append({"pass": 2, **info2, "sufficient": val2["sufficient"], "why": val["reason"]})
         cands, selected, val = c2, sel2, val2
-    timings = {"understand_s": round(t_plan, 3), "total_s": round(time.perf_counter() - t0, 3)}
-    return Retrieval(plan=plan, candidates=list(cands.values()), selected=selected, validation=val,
-                     passes=passes, timings=timings)
+    return cands, selected, val, passes

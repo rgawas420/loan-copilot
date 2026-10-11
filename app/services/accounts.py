@@ -310,6 +310,8 @@ def update_conversation(user_id: int, cid: str, title: str | None = None, data: 
 def delete_conversation(user_id: int, cid: str) -> bool:
     with closing(_conn()) as c:
         n = c.execute("DELETE FROM conversations WHERE id=? AND user_id=?", (cid, user_id)).rowcount
+        if n and c.execute("SELECT 1 FROM sqlite_master WHERE name='recommendations'").fetchone():
+            c.execute("DELETE FROM recommendations WHERE conversation_id=? AND user_id=?", (cid, user_id))
         c.commit()
     return n > 0
 

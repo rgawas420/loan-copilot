@@ -23,7 +23,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Iterator, List, Optional, Tuple
 
-from app.rag import bankers, grounding, live_check, lookup, profile as profiles, retrieval, smalltalk, websearch
+from app.rag import (bankers, followup, grounding, lender_eligibility, live_check, lookup, profile as profiles,
+                     retrieval, smalltalk, states, websearch)
 from app.rag.llm import describe_params, get_llm, model_name, provider, rag_params
 from app.rag.metering import purpose
 from app.rag.policies import programs_for
@@ -110,8 +111,14 @@ class Prepared:
 
     def __init__(self, mode, question, case, result, loan_type, history, attachments, partial, use_llm=True, profile=None):
         self.mode, self.question, self.profile, self.bankers, self.facts = mode, question, profile, None, None
+        self.route = None                   # how the message relates to the conversation (app/rag/followup.py)
+        self.route_obj = None
+        self.state = None                   # set here when decided before generation (app/rag/states.py)
+        self.state_info = None              # the final state, with its actions
         # A customer profile without a loan type or city: the app asks for them (nothing is searched or guessed).
         self.direct = profile.ask_answer() if profile and profile.missing_for_bankers() else ""
+        if self.direct:
+            self.state = states.MORE_INFORMATION_REQUIRED
         self.case, self.history, self.attachments = case or {}, history or [], list(attachments or [])
         # A question about the uploaded file is answered from the upload; the knowledge base is not searched, so
         # unrelated passages cannot leak into a summary of the user's own document.
@@ -131,9 +138,21 @@ class Prepared:
                     {"check": "question about the attached file", "ok": True,
                      "detail": "answered from the user's attachments; the knowledge base was not searched"}]})
         elif profile:      # a customer profile: the app picks the bankers; a focused query finds the product's policy
-            self.bankers = bankers.find(profile.loan_type or loan_type or "", profile.city)
-            self.retrieval = retrieval.retrieve(profile.search, [], profile.loan_type or loan_type, use_llm,
-                                                supporting=True)
+            lt = profile.loan_type or loan_type or ""
+            self.bankers = (bankers.find(lt, profile.city, profile.lenders or None, profile.exclude or None)
+                            if profile.lenders or profile.exclude else bankers.find(lt, profile.city))
+            profile.eligibility = lender_eligibility.evaluate_all(profile.fields, self.bankers.lenders + profile.explain)
+            stop = _profile_stop(profile, self.bankers)
+            if stop:           # the app answers itself: no further lenders, or the RM lists could not be read
+                self.direct, self.state = stop
+                self.retrieval = retrieval.Retrieval(
+                    plan=retrieval.understand(question, [], lt, use_llm=False), candidates=[], selected=[],
+                    passes=[], timings={}, validation={"sufficient": True, "reason": "", "checks": [
+                        {"check": "banker search", "ok": self.state != states.RETRIEVAL_FAILURE, "info": True,
+                         "detail": self.bankers.error or "no further lender has an RM for this loan type and city"}]})
+            else:
+                self.retrieval = retrieval.retrieve(profile.search, [], profile.loan_type or loan_type, use_llm,
+                                                    supporting=True)
         else:
             lt = loan_type or self.case.get("loan_type")
             plan = retrieval.understand(question, self.history, lt, use_llm)
@@ -168,9 +187,14 @@ class Prepared:
         # A knowledge-base question with no reliable evidence is answered "not found" without the LLM.
         # (A profile is still answered: its table and eligibility stand without a passage.)
         self.not_found = (mode == "kb" and not self.retrieval.validation["sufficient"] and not self.attachments
-                          and not partial and not self.lookup and not profile and not self.bankers and not self.facts)
+                          and not partial and not self.lookup and not profile and not self.bankers and not self.facts
+                          and not self.direct)
+        if self.not_found and self.retrieval.degraded:
+            # the search itself failed (even after its retry): "not found" was not established
+            self.not_found, self.direct, self.state = False, states.RETRIEVAL_FAILURE_REPLY, states.RETRIEVAL_FAILURE
         rules = grounding.ASK_RULES if mode == "ask" else profiles.PROFILE_RULES if profile else ""
-        self.messages = grounding.messages(question, self.context, self.history,
+        # a profile carried over from earlier in the chat is answered for the whole customer, not "city pune"
+        self.messages = grounding.messages(profile.question if profile else question, self.context, self.history,
                                            "" if profile else self.retrieval.plan.standalone, sections, rules, _tail(partial))
 
     def breakdown(self) -> dict:
@@ -212,7 +236,8 @@ class Prepared:
                            "context": self.context, "full": grounding.prompt_text(self.messages)},
                 "attachments": [_att(a)[0] for a in self.attachments], "about_upload": self.focus,
                 "app_written": bool(self.direct),           # the app's own reply (asks for details), not the model's
-                "profile": self.profile.trace() if self.profile else None,
+                "profile": self.profile.trace() if self.profile else None, "route": self.route,
+                "state": self.state_info,
                 "bankers": self.bankers.trace() if self.bankers else None,
                 "generation": generation, "answer": answer, "citations": post["sources"],
                 "unsupported_figures": post["unsupported_figures"], "invalid_citations": post["invalid_citations"],
@@ -447,6 +472,73 @@ def _read_profile(question: str) -> Optional["profiles.Profile"]:
         return None
 
 
+def _route(mode: str, question: str, history, attachments, partial: str, user_id: Optional[int] = None):
+    """A knowledge-base message in a conversation: how it relates to the customer and answers before it
+    (followup.py). Returns (route or None, the history to answer with: none for a new question or case)."""
+    if mode != "kb" or partial or attachments:
+        return None, history
+    if not history:
+        if followup.needs_lender(question, []):
+            return followup.Route(relation="clarify", reason="a lender fact with no lender or product",
+                                  direct=followup.ASK_WHICH), history
+        return None, history
+    route = followup.resolve(question, history, user_id, _conversation_id())
+    if route and route.relation in ("new", "new_case"):
+        return route, []
+    return route, history
+
+
+def _conversation_id() -> Optional[str]:
+    from app.services import rag_debug
+    try:
+        return (rag_debug.message_link.get() or (None, None))[0]
+    except LookupError:
+        return None
+
+
+def _profile_stop(profile, match) -> Optional[Tuple[str, str]]:
+    """(the app's own reply, state) when a customer's banker search cannot be answered from the RM lists."""
+    if match.top:
+        return None
+    if match.error:
+        return states.RM_LISTS_FAILURE_REPLY, states.RETRIEVAL_FAILURE
+    if profile.exclude and not profile.lenders:
+        lt, city = profile.loan_type or "loan", profile.city
+        rules = ("" if lender_eligibility.any_rules(profile.loan_type) else
+                 " These lenders are matched by RM availability; their eligibility rules aren't loaded in the app, so "
+                 "this is not a judgement on eligibility.")
+        return (f"I couldn't find additional lenders beyond the {len(profile.exclude)} already listed for this customer "
+                f"({lt} in {city}): the current RM lists have no other {lt} RM in {city}.{rules}\n\n"
+                "You can broaden the search by changing the city, the loan type or the customer's details.",
+                states.NO_ADDITIONAL_MATCHES)
+    return None
+
+
+def _direct_route(mode, question, route, user_id, origin) -> Tuple[str, dict, Optional[str]]:
+    """A follow-up the app answers itself (a new case, a clarifying question): (answer, state, trace id)."""
+    st = states.CLARIFICATION_REQUIRED if route.relation == "clarify" else states.MORE_INFORMATION_REQUIRED
+    info = {"state": st, "retry": False, "notice": "", "actions": [states.action(o[:40], o) for o in route.options]}
+    tid, _ = _record_direct(mode, question, f"follow-up: {route.relation}", route.direct, 0.0, user_id, origin,
+                            extra={"route": route.trace(), "state": info})
+    return route.direct, info, tid
+
+
+def _remember(prep: "Prepared", user_id: Optional[int]) -> Optional[str]:
+    """Store a customer's banker recommendation (app/services/recommendations.py)."""
+    prof, match = prep.profile, prep.bankers
+    if prof is None or match is None:
+        return None
+    from app.services import recommendations
+    shown = match.lenders
+    return recommendations.save(
+        user_id, _conversation_id(), relation=prof.relation or "new_profile", question=prof.question,
+        loan_type=prof.loan_type, city=prof.city,
+        profile={"fields": prof.fields, "other": prof.other, "scenario": prof.scenario},
+        shown=shown, seen=list(dict.fromkeys(prof.seen_before + shown)), evaluations=prof.eligibility,
+        sources=list(dict.fromkeys(b.path for b in match.top)), state=(prep.state_info or {}).get("state", ""),
+        base_id=prof.base_id, hypothetical=prof.hypothetical)
+
+
 def _start_places(prep: Prepared):
     """For a customer profile with a city: start looking up the lenders' branches (map and place cards)."""
     if not (prep.profile and prep.profile.city):
@@ -467,9 +559,9 @@ def _finish_places(future) -> Optional[dict]:
         return None
 
 
-def _record_direct(mode, question, what, answer, seconds, user_id, origin):
+def _record_direct(mode, question, what, answer, seconds, user_id, origin, extra: Optional[dict] = None):
     from app.services import rag_debug
-    data = _direct_trace(mode, question, what, answer, seconds)
+    data = {**_direct_trace(mode, question, what, answer, seconds), **(extra or {})}
     return rag_debug.record(data, user_id, origin), data
 
 
@@ -495,10 +587,21 @@ def stream(mode: str, question: str, case: Optional[dict] = None, result: Option
     if not partial and websearch.available() and websearch.is_web_question(question, attachments):
         yield from _stream_web(mode, question, history, user_id, llm)
         return
-    prof = None
+    prof, route = None, None
     if _is_profile(mode, question, attachments, partial):
         yield "status", {"stage": "search", "text": "Reading the customer profile"}
         prof = _read_profile(question)
+    elif mode == "kb" and not partial and not attachments:
+        if history:
+            yield "status", {"stage": "search", "text": "Reading the conversation"}
+        route, history = _route(mode, question, history, attachments, partial, user_id)
+        prof = route.profile if route else None
+        if route is not None and route.direct:
+            text, info, _ = _direct_route(mode, question, route, user_id, "chat")
+            yield "token", text
+            yield "sources", []
+            yield "state", info
+            return
     if prof:
         where = " ".join(x for x in [prof.city, prof.loan_type.lower()] if x)
         yield "status", {"stage": "search", "text": f"Searching knowledge base for {where} bankers" if where
@@ -509,13 +612,17 @@ def stream(mode: str, question: str, case: Optional[dict] = None, result: Option
     if prof:
         llm = get_llm("rag", max_tokens=profiles.MAX_TOKENS) or llm
     prep = Prepared(mode, question, case, result, loan_type, history, attachments, partial, profile=prof)
+    prep.route, prep.route_obj = (route.trace() if route else None), route
     yield "status", _status_after_search(prep)
     if prep.not_found or prep.direct:
         text = prep.direct or NOTHING_FOUND
         post = prep.finish(text)
+        prep.state_info = states.decide(prep, post, None)
         _record(prep, text, post, None, {}, user_id, "chat")
+        _remember(prep, user_id)
         yield "token", text
         yield "sources", []
+        yield "state", prep.state_info
         return
     places = _start_places(prep)                  # looked up while the answer is written
     yield "status", {"stage": "write", "text": "Preparing answer"}
@@ -545,11 +652,15 @@ def stream(mode: str, question: str, case: Optional[dict] = None, result: Option
         if post is None:
             answer = (partial or "") + "".join(parts)
             post = prep.finish(answer)
+        prep.state_info = states.decide(prep, post, conf)
         _record(prep, answer, post, _generation(llm, stopped=not done, correction=correction, live=live),
                 {"generate_s": round(time.perf_counter() - t0, 3)}, user_id, "chat")
+        if done:
+            _remember(prep, user_id)
     yield "sources", post["sources"]
     if conf:
         yield "confidence", conf
+    yield "state", prep.state_info
     if places is not None:
         found = _finish_places(places)
         if found:
@@ -586,10 +697,20 @@ def run(mode: str, question: str, case: Optional[dict] = None, result: Optional[
         data = _web_trace(mode, question, results, msgs, answer, post, llm, {"total_s": round(time.perf_counter() - t0, 3)})
         return {"answer": answer, "sources": post["sources"], "unsupported_figures": post["unsupported"],
                 "not_found": not results, "llm_skipped": False, "trace_id": rag_debug.record(data, user_id, origin), "trace": data}
-    prof = _read_profile(question) if llm is not None and _is_profile(mode, question, attachments, "") else None
+    prof, route = None, None
+    if llm is not None and _is_profile(mode, question, attachments, ""):
+        prof = _read_profile(question)
+    elif llm is not None:
+        route, history = _route(mode, question, history, attachments, "", user_id)
+        prof = route.profile if route else None
+        if route is not None and route.direct:
+            text, info, tid = _direct_route(mode, question, route, user_id, origin)
+            return {"answer": text, "sources": [], "unsupported_figures": [], "not_found": False, "llm_skipped": False,
+                    "state": info, "trace_id": tid, "trace": {"route": route.trace(), "state": info}}
     if prof:
         llm = get_llm("rag", max_tokens=profiles.MAX_TOKENS) or llm
     prep = Prepared(mode, question, case, result, loan_type, history, attachments, "", use_llm=llm is not None, profile=prof)
+    prep.route, prep.route_obj = (route.trace() if route else None), route
     generation, t0 = None, time.perf_counter()
     if prep.direct:
         answer = prep.direct
@@ -609,10 +730,12 @@ def run(mode: str, question: str, case: Optional[dict] = None, result: Optional[
         answer, post, live, conf = _live_check(llm, prep, answer, post)
     if generation is not None:
         generation = _generation(llm, correction=correction, live=live)
+    prep.state_info = states.decide(prep, post, conf)
     tid, data = _record(prep, answer, post, generation, {"generate_s": round(time.perf_counter() - t0, 3)}, user_id, origin)
+    _remember(prep, user_id)
     return {"answer": answer, "sources": post["sources"], "unsupported_figures": post["unsupported_figures"],
             "contact_mismatches": post["contact_mismatches"], "not_found": post["not_found"], "llm_skipped": llm is None and not prep.not_found,
-            "confidence": conf, "trace_id": tid, "trace": data}
+            "confidence": conf, "state": prep.state_info, "trace_id": tid, "trace": data}
 
 
 def answer(question: str, case: dict, result: dict, history: List[dict]) -> str:

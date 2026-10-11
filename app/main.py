@@ -15,7 +15,7 @@ from app.api.rag_admin import router as rag_admin_router
 from app.api.routes import router
 from app.core.config import BASE_DIR, get_settings
 from app.core.logging import setup_logging
-from app.services import accounts, ads, billing, feedback, rag_debug, usage
+from app.services import accounts, ads, billing, feedback, rag_debug, recommendations, usage
 from app.services.audit import init_db
 
 setup_logging()
@@ -26,6 +26,7 @@ usage.init_db()
 rag_debug.init_db()
 feedback.init_db()
 ads.init_db()
+recommendations.init_db()
 log = logging.getLogger(__name__)
 
 

@@ -92,7 +92,7 @@ def test_profile_uses_the_app_bankers_and_a_focused_policy_query(monkeypatch):
     queries = []
     policy = Document(page_content="Source: HL policy.pdf\nHome loan FOIR up to 60%.", metadata={"source": "HL policy.pdf",
                                                                                                 "corpus": "urban_money"}, id="p1")
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: queries.append(q) or [(policy, 0.8)])
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: queries.append(q) or [(policy, 0.8)])
     monkeypatch.setattr(retrieval, "keyword_hits", lambda q, k, exact: [])
     monkeypatch.setattr(bankers, "find", lambda lt, city: _match([
         (AUG, "Lender Name: Axis Bank | Type of Loan: Home Loan | City*: Pune | Bank/ NBFC RM Name: Ajit | "
@@ -109,7 +109,7 @@ def test_profile_uses_the_app_bankers_and_a_focused_policy_query(monkeypatch):
 
 
 def test_profile_without_bankers_is_still_answered(monkeypatch):
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: [])
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: [])
     monkeypatch.setattr(retrieval, "keyword_hits", lambda q, k, exact: [])
     monkeypatch.setattr(bankers, "find", lambda lt, city: _match([]))
     prep = chat.Prepared("kb", PROFILE_Q, {}, {}, None, [], [], "", use_llm=False, profile=_profile())

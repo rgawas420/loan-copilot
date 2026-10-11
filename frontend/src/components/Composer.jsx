@@ -23,7 +23,7 @@ const MAX_ATTACHMENTS = 5;
 const size = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${Math.round(n / 1024)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 
 export default function Composer({ convKey, modes, defaultMode, question, busy, streaming, onSend, onStop, onMode,
-                                   placeholder: heroPlaceholder }) {
+                                   placeholder: heroPlaceholder, prefill }) {
   const [text, setText] = useState("");
   const [override, setOverride] = useState(null);
   const [menu, setMenu] = useState(false);
@@ -36,6 +36,12 @@ export default function Composer({ convKey, modes, defaultMode, question, busy, 
   const mode = override && modes.includes(override) ? override : defaultMode;
   useEffect(() => { onMode?.(mode); }, [mode, onMode]);
   useEffect(() => { setOverride(null); setText(""); setFiles([]); }, [convKey]);
+  useEffect(() => {                            // a suggestion chip to complete ("Change the city to ")
+    if (!prefill) return;
+    setText(prefill.text);
+    const el = ref.current;
+    if (el) { el.focus(); requestAnimationFrame(() => el.setSelectionRange(prefill.text.length, prefill.text.length)); }
+  }, [prefill]);
   useEffect(() => () => files.forEach((f) => f.preview && URL.revokeObjectURL(f.preview)), []);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setOverride((o) => (o === "kb" || o === "ask" ? o : null)); }, [defaultMode]);
   useEffect(() => { if (!busy) ref.current?.focus({ preventScroll: true }); }, [busy, convKey, question?.key]);

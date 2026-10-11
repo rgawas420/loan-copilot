@@ -169,6 +169,7 @@ export const api = {
 
   // RAG quality (admin role): traces, test bench, golden tests, configuration
   ragConfig: () => request("/api/admin/rag/config"),
+  policyCoverage: (minRms = 1) => request(`/api/admin/rag/policy-coverage?min_rms=${minRms}`),
   ragTraces: (q = "", only = "") =>
     request(`/api/admin/rag/traces?q=${encodeURIComponent(q)}&only=${encodeURIComponent(only)}`),
   ragTrace: (id, expect = {}) => {
@@ -280,7 +281,7 @@ async function readEvents(path, body, onEvent, signal) {
  * Resolves when the server sends 'done'. Rejects with .network when the stream breaks off,
  * with .server for an error the server reported, or with an AbortError when stopped.
  */
-export async function streamChat(body, { onStatus, onToken, onReplace, onSources, onVerification, onConfidence, onPlaces, onUsage, onAd, signal }) {
+export async function streamChat(body, { onStatus, onToken, onReplace, onSources, onVerification, onConfidence, onState, onPlaces, onUsage, onAd, signal }) {
   let done = false;
   await readEvents("/api/chat/stream", body, (kind, data) => {
     if (kind === "status") onStatus?.(data);
@@ -289,6 +290,7 @@ export async function streamChat(body, { onStatus, onToken, onReplace, onSources
     else if (kind === "sources") onSources?.(data);
     else if (kind === "verification") onVerification?.(data);
     else if (kind === "confidence") onConfidence?.(data);    // high / medium / low, after the claim check
+    else if (kind === "state") onState?.(data);              // {state, retry, notice, actions} (app/rag/states.py)
     else if (kind === "places") onPlaces?.(data);          // lender branches for a map (customer profiles)
     else if (kind === "ad") onAd?.(data);
     else if (kind === "usage") onUsage?.(data);
@@ -296,6 +298,7 @@ export async function streamChat(body, { onStatus, onToken, onReplace, onSources
     else if (kind === "error") {
       const err = new Error(data?.message || "Something went wrong.");
       err.server = true;
+      err.state = data?.state;                               // RATE_LIMITED / TEMPORARY_SERVICE_FAILURE / INTERNAL_ERROR
       throw err;
     }
     return true;

@@ -25,7 +25,7 @@ def test_priority_defaults_from_the_document_type_and_drops_for_ocr_and_expiry()
 
 def test_higher_priority_source_ranks_first_and_the_prompt_states_authority(kbenv, monkeypatch):
     root, _ = kbenv
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: [])          # keyword search only
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: [])          # keyword search only
     (root / "HDFC payout answers.txt").write_text("HDFC Bank business loan payout is 1.20 percent.")
     (root / "HDFC Payout Sheet.txt").write_text("HDFC Bank business loan payout is 1.35 percent.")
     kb.sync()

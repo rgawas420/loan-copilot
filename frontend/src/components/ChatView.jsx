@@ -288,6 +288,23 @@ function FeedbackReasons({ onSend, onSkip }) {
 const KB_CITE = /\s?(?:\[\s*(?:sources?:\s*)?S\d+(?:\s*(?:[,;&]|and)?\s*S?\d+)*\s*\]|【\s*S\d+[^】]{0,20}】)/gi;
 const userText = (t) => (t || "").replace(KB_CITE, "");
 
+const ERROR_TITLES = {
+  RATE_LIMITED: "The AI service is busy right now.",
+  TEMPORARY_SERVICE_FAILURE: "A service did not respond.",
+};
+
+/** Next steps for this answer's state (server-chosen): send it now, or put it in the composer to complete. */
+function Suggestions({ items, disabled, onPick }) {
+  return (
+    <div className="chips subtle suggestions" role="group" aria-label="Suggested next steps">
+      {items.map((a) => (
+        <button key={a.label} type="button" className={`chip${a.send ? "" : " ghost"}`} disabled={disabled}
+                onClick={() => onPick(a)}>{a.label}</button>
+      ))}
+    </div>
+  );
+}
+
 const AnswerMessage = memo(function AnswerMessage({ m, isLast, busy, isAdmin, actions }) {
   const [copied, copy] = useCopy();
   const [askWhy, setAskWhy] = useState(false);
@@ -317,7 +334,7 @@ const AnswerMessage = memo(function AnswerMessage({ m, isLast, busy, isAdmin, ac
         {m.error && !m.limit && (
           <div className="msg-alert" role="alert">
             <Icon name="alert" size={18} />
-            <div><b>Something went wrong.</b><p>{m.error}</p>
+            <div><b>{ERROR_TITLES[m.errorState] || "Something went wrong."}</b><p>{m.error}</p>
               <button className="btn btn-ghost btn-sm" disabled={!!busy} onClick={() => actions.retry(m.id)}>
                 <Icon name="refresh" size={14} />Try again</button></div>
           </div>
@@ -341,7 +358,17 @@ const AnswerMessage = memo(function AnswerMessage({ m, isLast, busy, isAdmin, ac
               documents. {isAdmin ? "Open the sources to confirm the exact figures." : "Confirm the exact figures with the lender or RM."}</span>
           </p>
         )}
+        {!m.streaming && m.state?.notice && (
+          <p className="verify-note" role="note"><Icon name="alert" size={15} /><span>{m.state.notice}</span></p>
+        )}
+        {!m.streaming && !m.error && m.state?.retry && (
+          <button className="btn btn-ghost btn-sm state-retry" disabled={!!busy} onClick={() => actions.retry(m.id)}>
+            <Icon name="refresh" size={14} />Try again</button>
+        )}
         {!m.streaming && <Sources sources={sources} isAdmin={isAdmin} />}
+        {!m.streaming && !m.error && isLast && m.state?.actions?.length > 0 && (
+          <Suggestions items={m.state.actions} disabled={!!busy} onPick={(a) => actions.suggest(a, m.mode)} />
+        )}
 
         {!m.streaming && !m.error && m.text && (
           <div className={`msg-actions${isLast ? " show" : ""}`}>
@@ -508,13 +535,17 @@ export default function ChatView({ c, conv, title, health, isAdmin, sidebarOpen,
   const activeQ = answering && lastQ > lastResult && messages[lastQ].key === view.question.key ? lastQ : -1;
   const repeatQ = answering && activeQ === -1 && c.status === "ready" && mode === "answer";
   const answeredCount = view.summary.filter((s) => !s.skipped).length;
-  const actions = useMemo(() => ({ retry: c.retry, resume: c.resume, regenerate: c.regenerate, rate: c.rate, explain: c.explain }),
-    [c.retry, c.resume, c.regenerate, c.rate, c.explain]);
+  const [prefill, setPrefill] = useState(null);
+  const send = c.send;
+  const suggest = useCallback((a, mode) => (a.send ? send(a.text, mode || "kb") : setPrefill({ text: a.text, n: Date.now() })),
+    [send]);
+  const actions = useMemo(() => ({ retry: c.retry, resume: c.resume, regenerate: c.regenerate, rate: c.rate, explain: c.explain, suggest }),
+    [c.retry, c.resume, c.regenerate, c.rate, c.explain, suggest]);
 
   const composer = c.status === "ready" && (
     <Composer convKey={c.key} modes={c.modes} defaultMode={c.defaultMode} question={view.question}
               busy={!!busy && !c.streaming} streaming={c.streaming} onSend={c.send} onStop={c.stop} onMode={setMode}
-              placeholder={empty ? "Ask anything" : undefined} />
+              placeholder={empty ? "Ask anything" : undefined} prefill={prefill} />
   );
 
   function startRename() { setDraftTitle(title); setRenaming(true); }

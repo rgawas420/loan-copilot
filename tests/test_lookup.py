@@ -147,7 +147,7 @@ def _client():
 def test_chat_answers_a_list_question_from_the_rows(folder, monkeypatch):
     _xlsx(folder / "rms.xlsx", RM_LIST)
     kb.sync()
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: [])     # passage search finds nothing
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: [])     # passage search finds nothing
     monkeypatch.setattr(retrieval, "keyword_hits", lambda q, k, exact: [])
     llm = FakeLLM(["Pune personal loan RMs: Sachin Agarwal, Neha Joshi, Amit Kale [S1]"])
     monkeypatch.setattr(chat, "get_llm", lambda kind="fast": llm)
@@ -167,7 +167,7 @@ def test_chat_answers_a_list_question_from_the_rows(folder, monkeypatch):
 def test_answer_failing_the_source_check_is_rewritten_once(folder, monkeypatch):
     _xlsx(folder / "rms.xlsx", RM_LIST)
     kb.sync()
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: [])
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: [])
     monkeypatch.setattr(retrieval, "keyword_hits", lambda q, k, exact: [])
     llm = FakeLLM(["Sachin Agarwal: 9800000009 [S1]"], fixed="Sachin Agarwal: 9800000001 [S1]")
     monkeypatch.setattr(chat, "get_llm", lambda kind="fast": llm)

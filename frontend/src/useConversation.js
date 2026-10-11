@@ -14,6 +14,8 @@ import { label } from "./format.js";
 //   checking, sources, verification, places, ad, replyTo, stopped, interrupted, error, limit, feedback, feedbackReason, confidence }
 // checking: the answer is being checked against the sources (the text of the step); a rewrite replaces text.
 // confidence: {level: high / medium / low, reasons} from the claim check, shown under the answer.
+// state: {state, retry, notice, actions} from the server (app/rag/states.py): the notice, a retry button and the
+//   suggestion chips under the answer. errorState: the state of a failed answer (never "not found").
 // limit: the server refused the request for the plan's limits ({code, message, plan, limit, used, ...}).
 
 const EMPTY_VIEW = { question: null, answered: 0, total: 1, ready: false, message: "", summary: [] };
@@ -194,7 +196,7 @@ export function useConversation({ onCreated, onSaved, onUsage }) {
     const ctrl = new AbortController();
     patch(key, () => ({ abort: ctrl }));
     updateMsg(key, msgId, () => ({ streaming: true, checking: false, stages: [], error: null, limit: null, stopped: false, interrupted: false,
-                                    ...(continueFrom ? {} : { text: "", sources: null, verification: null, places: null, ad: null, confidence: null, feedback: null, feedbackReason: null }) }));
+                                    ...(continueFrom ? {} : { text: "", sources: null, verification: null, places: null, ad: null, confidence: null, state: null, errorState: null, feedback: null, feedbackReason: null }) }));
     const e = get(key);
     const msgs = e.data.messages;
     const reply = msgs.find((m) => m.id === msgId);
@@ -232,6 +234,7 @@ export function useConversation({ onCreated, onSaved, onUsage }) {
         onSources: (src) => { clearTimeout(timer); flush(); updateMsg(key, msgId, () => ({ sources: src })); },
         onVerification: (v) => updateMsg(key, msgId, () => ({ verification: v })),
         onConfidence: (c) => updateMsg(key, msgId, () => ({ confidence: c })),
+        onState: (s) => updateMsg(key, msgId, () => ({ state: s })),
         onPlaces: (p) => updateMsg(key, msgId, () => ({ places: p })),
         onAd: (ad) => updateMsg(key, msgId, () => ({ ad })),
         onUsage: (u) => onUsage?.(u.usage),
@@ -245,7 +248,7 @@ export function useConversation({ onCreated, onSaved, onUsage }) {
         if (err.name === "AbortError") return { ...base, stopped: true };
         if (wrote && (m.text || "").trim()) return { ...base, interrupted: true, interruptReason: err.message };
         return { ...base, error: err.network ? "I couldn't reach the server, so no answer was generated." : err.message,
-                 limit: limitOf(err) };
+                 errorState: err.network ? "TEMPORARY_SERVICE_FAILURE" : err.state || null, limit: limitOf(err) };
       });
       if (limitOf(err)) onUsage?.(null);            // refresh the usage indicator
     } finally {

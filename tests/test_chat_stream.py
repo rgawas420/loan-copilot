@@ -29,7 +29,7 @@ DOCS = [Document(page_content="Source: Code Book-5.xlsx | Sheet: Codes\nBANK NAM
 
 def _kb(monkeypatch, docs):
     """The retrieval pipeline runs for real; only the vector and keyword searches return these documents."""
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: [(d, 0.8) for d in docs])
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: [(d, 0.8) for d in docs])
     monkeypatch.setattr(retrieval, "keyword_hits", lambda q, k, exact: [])
 
 
@@ -58,7 +58,7 @@ def test_stream_sends_steps_tokens_then_sources(monkeypatch):
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
     ev = _events(r.text)
     kinds = [k for k, _ in ev]
-    assert kinds[:3] == ["status", "status", "status"] and kinds[-3:] == ["sources", "usage", "done"]
+    assert kinds[:3] == ["status", "status", "status"] and kinds[-4:] == ["sources", "state", "usage", "done"]
     assert [p["text"] for k, p in ev if k == "status"] == ["Searching knowledge base", "Reading 1 relevant document",
                                                             "Preparing answer"]
     tokens = [p for k, p in ev if k == "token"]
@@ -103,7 +103,9 @@ def test_continue_and_attachments_reach_the_prompt(monkeypatch):
     n = len(llm.prompts)
     r = other.post("/api/chat/stream", json={"mode": "kb", "question": "What tenure?", "attachment_ids": [att["id"]]})
     # without the attachment there is no evidence of a tenure, so the model is not asked at all
-    assert ("token", chat.NOTHING_FOUND) in _events(r.text) and len(llm.prompts) == n
+    from app.rag.followup import ASK_WHICH          # without the file, "What tenure?" names no lender: asked back
+    tokens = [d for k, d in _events(r.text) if k == "token"]
+    assert tokens in ([chat.NOTHING_FOUND], [ASK_WHICH]) and len(llm.prompts) == n
     assert other.delete(f"/api/attachments/{att['id']}").status_code == 404
     assert c.delete(f"/api/attachments/{att['id']}").status_code == 200
 
@@ -165,7 +167,7 @@ def test_image_is_read_by_the_vision_model_kept_and_shown_to_its_owner_only(monk
     llm = FakeLLM(("The card sets FOIR at **70%** ", "for salaries above ₹75K [A1]."))
     monkeypatch.setattr(chat, "get_llm", lambda kind="fast": llm)
     called = []
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: called.append(q) or [])
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: called.append(q) or [])
     ev = _events(c.post("/api/chat/stream", json={"mode": "kb", "question": "summarize this image",
                                                   "attachment_ids": [att["id"]]}).text)
     assert called == []                                        # a question about the upload does not search the KB
@@ -220,7 +222,7 @@ def test_users_never_receive_knowledge_base_sources(monkeypatch):
 def test_small_talk_is_answered_directly_without_searching(monkeypatch):
     from app.rag import smalltalk
     searched = []
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: searched.append(q) or [])
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: searched.append(q) or [])
     monkeypatch.setattr(retrieval, "keyword_hits", lambda q, k, exact: searched.append(q) or [])
     c, _ = _user()
     ev = _events(c.post("/api/chat/stream", json={"mode": "kb", "question": "hi"}).text)
@@ -246,7 +248,7 @@ def test_public_questions_go_to_the_web_not_the_knowledge_base(monkeypatch):
                {"title": "Axis Bank", "url": "https://www.axisbank.com/", "content": "Axis Bank official site."}]
     monkeypatch.setattr(websearch, "search", lambda q, k=6: results)
     searched = []
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: searched.append(q) or [])
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: searched.append(q) or [])
     llm = FakeLLM(("SBI: https://sbi.co.in [W1]; ", "Axis Bank: https://www.axisbank.com [W2]; ", "also https://sbi-netbank.help"))
     monkeypatch.setattr(chat, "get_llm", lambda kind="fast": llm)
     _user()

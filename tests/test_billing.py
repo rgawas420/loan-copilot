@@ -54,7 +54,7 @@ DOCS = [Document(page_content="Source: Code Book.xlsx\nBANK NAME: Axis Bank | HL
 
 
 def _kb(monkeypatch, llm):
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: [(d, 0.8) for d in DOCS])
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: [(d, 0.8) for d in DOCS])
     monkeypatch.setattr(retrieval, "keyword_hits", lambda q, k, exact: [])
     monkeypatch.setattr(chat, "get_llm", lambda kind="fast": llm)
 

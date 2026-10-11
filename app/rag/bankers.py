@@ -145,6 +145,8 @@ class Match:
     duplicates: int = 0
     conflicts: int = 0
     lenders_filter: List[str] = field(default_factory=list)  # only these lenders (a question naming a bank)
+    excluded: List[str] = field(default_factory=list)        # lenders already shown ("other than above bank")
+    error: str = ""                                           # the RM lists could not be read: the search is incomplete
     source: str = "row index"                                 # "directory" when read from the banker directory
     total: int = 0                                            # distinct bankers matched (before the top TOP)
 
@@ -187,7 +189,8 @@ class Match:
 
     def trace(self) -> dict:
         return {"loan_type": self.loan_type, "city": self.city, "source": self.source,
-                "lenders_filter": self.lenders_filter, "rows_read": self.rows_read,
+                "lenders_filter": self.lenders_filter, "excluded": self.excluded, "error": self.error,
+                "rows_read": self.rows_read,
                 "duplicates": self.duplicates, "conflicts": self.conflicts, "also_check": self.also,
                 "top": [{"lender": b.lender, "name": b.name, "phone": b.phone, "match": b.match, "list": b.title,
                          "recency": b.recency, "lists": b.lists, "presence": b.presence, "notes": b.notes}
@@ -203,12 +206,13 @@ def _rows(db, expr: str, active: Optional[dict]) -> List[Tuple[str, str]]:
     return out
 
 
-def find(loan_type: str, city: str, lenders: Optional[List[str]] = None) -> Match:
+def find(loan_type: str, city: str, lenders: Optional[List[str]] = None, exclude: Optional[List[str]] = None) -> Match:
     """The bankers to approach for this loan type in this city, optionally only at these lenders (canonical
-    names, e.g. from entities.find_banks). See the module docstring."""
+    names, e.g. from entities.find_banks) and never at the excluded ones (already shown). See the module
+    docstring."""
     from app.services import banker_directory
     from app.services.knowledge_base import _db
-    res = Match(loan_type=loan_type, city=city, lenders_filter=list(lenders or []))
+    res = Match(loan_type=loan_type, city=city, lenders_filter=list(lenders or []), excluded=list(exclude or []))
     if not city:
         return res
     try:
@@ -217,8 +221,9 @@ def find(loan_type: str, city: str, lenders: Optional[List[str]] = None) -> Matc
                 recs = banker_directory.records(db, city, loan_type, lenders)
                 res.source, res.rows_read = "directory", len(recs)
                 return rank_records(res, [_from_directory(r) for r in recs])
-    except sqlite3.Error:
+    except sqlite3.Error as e:
         log.exception("Banker directory unreadable; reading the row index")
+        res.error = f"banker directory: {type(e).__name__}"
     return _find_in_rows(res, loan_type, city)
 
 
@@ -250,9 +255,11 @@ def _find_in_rows(res: Match, loan_type: str, city: str) -> Match:
             if product and not rows:                   # no row names the product: the city's unlabelled RMs
                 rows = _rows(db, lookup._phrase(city), active)
             metas = {p: json.loads(m) for p, m in db.execute("SELECT path, meta FROM kb_row_files")}
-    except sqlite3.Error:
+    except sqlite3.Error as e:
         log.exception("Banker rows unreadable")
+        res.error = f"RM lists: {type(e).__name__}"
         return res
+    res.error = ""                                  # the row index answered after the directory failed
     return rank(res, rows, metas, authority)
 
 
@@ -285,10 +292,12 @@ def rank(res: Match, rows: List[Tuple[str, str]], metas: Dict[str, dict], author
 
 def rank_records(res: Match, records: List[Banker]) -> Match:
     """De-duplicate (one record per lender + banker in this city: the most recent list's) and rank (steps 3-4)."""
-    if res.lenders_filter:
+    if res.lenders_filter or res.excluded:
         from app.services.banker_directory import canonical_lender, key
         keep = {key(n) for n in res.lenders_filter}
-        records = [b for b in records if key(canonical_lender(b.lender)[0]) in keep]
+        drop = {key(canonical_lender(n)[0]) for n in res.excluded} | {key(n) for n in res.excluded}
+        records = [b for b in records if (not keep or key(canonical_lender(b.lender)[0]) in keep)
+                   and key(canonical_lender(b.lender)[0]) not in drop and key(b.lender) not in drop]
     best: Dict[Tuple[str, str], List[Banker]] = {}           # (lender, banker) -> records, best first
     for b in records:
         best.setdefault((_norm(b.lender), _norm(b.name)), []).append(b)

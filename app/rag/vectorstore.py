@@ -7,6 +7,7 @@ extractions) and every policy file uploaded earlier (kept in uploads/ and listed
 search() is hybrid: Urban Money chunks rank ahead of other sources, and exact-match terms in the query
 (pincodes, codes, phone numbers) are looked up in a keyword index as well as by embedding similarity.
 """
+import contextvars
 import logging
 import threading
 import time
@@ -118,13 +119,23 @@ def delete_documents(ids: List[str]):
 
 _search_pool = None
 _pool_lock = threading.Lock()
+# Vector searches that timed out or failed during the current retrieval: retrieval.retrieve collects them, so an
+# outage is not reported as "not found" (worker threads get a copy of the context that shares the same list).
+issues: contextvars.ContextVar = contextvars.ContextVar("vector_issues", default=None)
+timeout_scale: contextvars.ContextVar = contextvars.ContextVar("vector_timeout_scale", default=1.0)
+
+
+def note_issue(kind: str):
+    got = issues.get()
+    if got is not None:
+        got.append(kind)
 
 
 def _scored(vs, query: str, k: int, flt):
     """Similarity search bounded by VECTOR_TIMEOUT_S: a slow vector store (a Pinecone round-trip can stall for
     10-20 s) must not hold up the answer; the keyword search still runs, and the timeout is logged."""
     global _search_pool
-    timeout = get_settings().vector_timeout_s
+    timeout = get_settings().vector_timeout_s * timeout_scale.get()
     try:
         if not timeout or not is_pinecone():
             return vs.similarity_search_with_score(query, k=k, filter=flt)
@@ -138,9 +149,11 @@ def _scored(vs, query: str, k: int, flt):
         return _search_pool.submit(vs.similarity_search_with_score, query, k=k, filter=flt).result(timeout=timeout)
     except TimeoutError:
         log.warning("Vector search took longer than %ss; answering from keyword search", timeout)
+        note_issue("timeout")
         return []
     except Exception:
         log.exception("Vector search failed")
+        note_issue("error")
         return []
 
 

@@ -4,7 +4,71 @@ import { api } from "../api.js";
 // Admin: data quality. The banker directory's problems (from the RM lists), the name aliases admins add, and the
 // structured policy facts (ROI, payout, fees ...) that answer exact questions once approved.
 
-const SECTIONS = [["bankers", "Banker data"], ["aliases", "Name aliases"], ["facts", "Policy facts"]];
+const SECTIONS = [["bankers", "Banker data"], ["rules", "Lender rules"], ["aliases", "Name aliases"], ["facts", "Policy facts"]];
+const RULES_TAG = { missing: ["warn", "No rules"], sample: ["warn", "Sample"], stale: ["warn", "Overdue check"], loaded: ["ok", "Loaded"] };
+
+/** Lenders with RMs but no structured eligibility rules: the app cannot say whether they suit a customer, or why not. */
+function LenderRules() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [minRms, setMinRms] = useState(3);
+  const [type, setType] = useState("");
+  const [onlyGaps, setOnlyGaps] = useState(true);
+  const load = useCallback(() => { setError(""); api.policyCoverage(minRms).then(setData).catch((e) => setError(e.message)); }, [minRms]);
+  useEffect(load, [load]);
+  const types = data ? Object.keys(data.totals) : [];
+  const rows = (data?.lenders || []).filter((r) => (!type || r.loan_type === type) && (!onlyGaps || r.rules !== "loaded"));
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>Lender eligibility rules</h2>
+        <button className="btn btn-ghost btn-sm" onClick={load}>Refresh</button>
+      </div>
+      <p className="hint">Lenders with RMs in the RM lists, and whether their structured eligibility rules (minimum CIBIL,
+        income, FOIR, LTV, loan amount) are loaded. Without rules the app ranks bankers by RM availability only and
+        answers "why not this lender?" with "can't verify". Send this list to the credit team to fill the gaps.</p>
+      {error && <p className="err" role="alert">{error}</p>}
+      {!data && !error && <p className="muted">Loading…</p>}
+      {data && (
+        <>
+          <p><b>{data.programs_loaded}</b> lender programs loaded.</p>
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Loan type</th><th>Lenders with RMs</th><th>No rules</th><th>Sample / overdue</th><th>Loaded</th></tr></thead>
+              <tbody>{Object.entries(data.totals).map(([t, v]) => (
+                <tr key={t}><td>{t}</td><td>{v.lenders}</td><td>{v.missing}</td><td>{v.sample + v.stale}</td><td>{v.loaded}</td></tr>
+              ))}</tbody>
+            </table>
+          </div>
+          <div className="row-gap" style={{ marginTop: 12 }}>
+            <label className="small">Loan type{" "}
+              <select value={type} onChange={(e) => setType(e.target.value)}>
+                <option value="">All</option>{types.map((t) => <option key={t}>{t}</option>)}
+              </select></label>
+            <label className="small">At least{" "}
+              <select value={minRms} onChange={(e) => setMinRms(Number(e.target.value))}>
+                {[1, 3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select> RMs</label>
+            <label className="small"><input type="checkbox" checked={onlyGaps} onChange={(e) => setOnlyGaps(e.target.checked)} /> Gaps only</label>
+          </div>
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Loan type</th><th>Lender</th><th>RMs</th><th>Cities</th><th>Rules</th></tr></thead>
+              <tbody>{rows.slice(0, 300).map((r) => (
+                <tr key={`${r.loan_type}|${r.lender}`}>
+                  <td className="small">{r.loan_type}</td><td>{r.lender}</td><td>{r.rms}</td><td>{r.cities}</td>
+                  <td><span className={`tag ${RULES_TAG[r.rules][0]}`}>{RULES_TAG[r.rules][1]}</span>
+                    {r.program && <span className="small muted"> {r.program}{r.verified ? `, verified ${r.verified}` : ""}</span>}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          {rows.length > 300 && <p className="hint">Showing 300 of {rows.length}. Narrow by loan type.</p>}
+        </>
+      )}
+    </section>
+  );
+}
 const KIND_LABEL = { bank: "Bank / lender", product: "Product", city: "City" };
 
 function BankerData() {
@@ -189,6 +253,7 @@ export default function DataQuality() {
         ))}
       </nav>
       {section === "bankers" && <BankerData />}
+      {section === "rules" && <LenderRules />}
       {section === "aliases" && <Aliases />}
       {section === "facts" && <Facts />}
     </>

@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     # Live claim check: after each knowledge-base answer, the fast model checks every claim against the passages; an
     # unsupported claim gets one rewrite, and partners see a confidence level (high / medium / low).
     live_check: bool = True
+    # Before a knowledge-base answer in a conversation, the fast model decides whether the message is a follow-up
+    # (a change to the customer discussed earlier, a lender for that customer, ...) or a new question.
+    chat_followup_router: bool = True
     eval_judge: bool = True
     eval_judge_provider: str = "groq"                    # "groq" or "openai" (needs OPENAI_API_KEY; independent of
                                                          # the answer model, and outside Groq's rate limits)

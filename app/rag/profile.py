@@ -101,6 +101,11 @@ EXTRA = [("customer_name", "Customer Name"), ("annual_income", "Annual Income"),
          ("credit_history", "Credit History")]
 
 
+def label(key: str) -> str:
+    """The profile table's label for a field."""
+    return dict(CORE + EXTRA, property_location="Property Location").get(key, key.replace("_", " ").title())
+
+
 def _cell(s: str) -> str:
     return str(s).replace("|", "/").replace("\n", " ").strip()
 
@@ -111,6 +116,17 @@ class Profile:
     fields: Dict[str, str]
     other: List[str] = field(default_factory=list)
     calc: Dict[str, object] = field(default_factory=dict)
+    lenders: List[str] = field(default_factory=list)     # a follow-up asked about these lenders only
+    # set by a follow-up (app/rag/followup.py):
+    relation: str = ""                                    # how the message related to the conversation
+    exclude: List[str] = field(default_factory=list)     # lenders already shown for this customer
+    hypothetical: bool = False                            # a what-if scenario, not the customer's recorded details
+    scenario: str = ""                                    # what the scenario changed
+    explain: List[str] = field(default_factory=list)     # "why not <lender>?"
+    shown_before: List[str] = field(default_factory=list)  # lenders of the previous answer's bankers table
+    base_id: Optional[str] = None                         # the stored recommendation this one continues
+    seen_before: List[str] = field(default_factory=list)  # lenders shown for this customer before this answer
+    eligibility: List[dict] = field(default_factory=list)  # per-lender outcomes (app/rag/lender_eligibility.py)
 
     @property
     def loan_type(self) -> str:
@@ -124,7 +140,7 @@ class Profile:
     @property
     def search(self) -> str:
         """The focused knowledge-base query for the product's policy (bankers come from bankers.py)."""
-        return " ".join(x for x in [self.loan_type, self.city, "eligibility policy"] if x)
+        return " ".join(x for x in [*self.lenders, self.loan_type, self.city, "eligibility policy"] if x)
 
     def profile_table(self) -> str:
         vals = {**self.fields, "location": self.fields.get("property_location") or ""}
@@ -158,21 +174,62 @@ class Profile:
         return ("ranked by RM availability in the knowledge base (newest list first), not by each lender's "
                 "eligibility rules, which are not loaded for this loan type")
 
+    def why(self, match=None) -> str:
+        """"Why not <lender>?": the rules engine's outcome and where the lender stands in the RM lists. Only
+        facts the app established; nothing guessed."""
+        from app.rag import lender_eligibility
+        out = []
+        by = {r["lender"]: r for r in self.eligibility}
+        top = [b.lender for b in match.top] if match is not None else []
+        for name in self.explain:
+            r = by.get(name) or lender_eligibility.evaluate_lender(self.fields, name)
+            line = [lender_eligibility.explain(r, self.fields)]
+            k = _lender_key(name)
+            before = [i for i, l in enumerate(self.shown_before, 1) if _lender_key(l) == k]
+            mine = [b for b in (match.top if match is not None else []) if _lender_key(b.lender) == k]
+            lt, city = self.loan_type or "loan", self.city or "this city"
+            if before:
+                line.append(f"{name} is #{before[0]} in the bankers list above.")
+            elif mine:
+                n = match.total if len(self.explain) == 1 else len(mine)     # the table shows at most 10
+                line.append(f"{name} has {n} {lt} RM(s) for {city} in the RM lists (below); it was not in the "
+                            f"top 10 because that list is {self.ranking_basis()}.")
+            elif match is not None and not match.error:
+                line.append(f"No {lt} RM at {name} for {city} appears in the current RM lists.")
+            out.append(" ".join(line))
+        return "\n\n".join(out)
+
     def sections(self, match=None) -> List[Tuple[str, str]]:
         out = [("CUSTOMER PROFILE TABLE (built by the app; copy exactly)", self.profile_table()),
                ("ELIGIBILITY SNAPSHOT TABLE (calculated by the app; copy exactly, do not recalculate)",
                 str(self.calc.get("table") or "Eligibility was not calculated: " + str(self.calc.get("reason", "")))),
                ("ELIGIBILITY RESULT (calculated by the app)", str(self.calc.get("verdict") or ""))]
+        if self.hypothetical:
+            out.insert(0, ("HYPOTHETICAL SCENARIO (start the answer with exactly: \"**Hypothetical scenario:** "
+                           f"{self.scenario or 'changed details'}. The customer's recorded details are unchanged.\")",
+                           self.scenario or "changed details"))
+        if self.exclude:
+            out.append(("ALREADY SHOWN for this customer (excluded from this search; say the list below has "
+                        "additional lenders beyond these)", ", ".join(self.exclude)))
         if match is not None:
-            where = " ".join(x for x in [self.city] if x)
+            where = " ".join(x for x in [self.city] if x) + (f" at {', '.join(self.lenders)}" if self.lenders else "")
             out.append((f"BANKERS TABLE for {where or 'the location'} (chosen and ranked by the app from the knowledge "
                         "base; copy exactly)", match.table()))
             out.append(("RANKING BASIS (state it in one short line under the bankers table)", self.ranking_basis()))
             out.append(("ALSO CHECK (more lenders in the knowledge base)", ", ".join(match.also) or "(none)"))
+        from app.rag import lender_eligibility
+        elig = lender_eligibility.table(self.eligibility)
+        if elig:
+            out.append(("LENDER ELIGIBILITY TABLE (rules engine; copy exactly)", elig))
+        if self.explain:
+            out.append((f"WHY {', '.join(self.explain).upper()} (established by the app; copy exactly)", self.why(match)))
         return out
 
     def trace(self) -> dict:
         return {"fields": self.fields, "other": self.other, "location": self.city, "search": self.search,
+                "lenders": self.lenders, "relation": self.relation, "exclude": self.exclude,
+                "hypothetical": self.hypothetical, "scenario": self.scenario, "explain": self.explain,
+                "base_id": self.base_id, "eligibility": self.eligibility,
                 "eligibility": {k: v for k, v in self.calc.items() if k not in ("table", "verdict")}}
 
 
@@ -312,5 +369,17 @@ and chosen the bankers; you present them. Answer in exactly this structure (Mark
    observation from the ELIGIBILITY RESULT and the profile (e.g. EMI vs capacity, a missing detail, a strong or
    weak CIBIL). Never claim approval is guaranteed.
 
+When these sections are given, also:
+- HYPOTHETICAL SCENARIO: start with the exact line it gives, before item 1.
+- ALREADY SHOWN: in item 1 say these are additional lenders beyond those already listed; never list an
+  already-shown lender again.
+- LENDER ELIGIBILITY TABLE: after item 4, "### Lender Eligibility" and the table exactly as given.
+- WHY <LENDER>: right after item 1, "### Why <lender>" and the text exactly as given. Never add another reason.
+
 Use only figures from the tables and the profile; do not calculate anything. Do not repeat the profile in prose,
 explain loans in general or add advice. Keep the whole answer short (about 400-800 tokens). No sources section."""
+
+
+def _lender_key(name: str) -> str:
+    from app.services.banker_directory import canonical_lender, key
+    return key(canonical_lender(name)[0])

@@ -28,7 +28,7 @@ def kbenv(monkeypatch, tmp_path):
     monkeypatch.setattr(get_settings(), "kb_cache_dir", tmp_path / "cache")
     monkeypatch.setattr(vectorstore, "is_pinecone", lambda: True)
     monkeypatch.setattr(vectorstore, "get_vectorstore", lambda: store)
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: [])     # keyword + exact search only
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: [])     # keyword + exact search only
     kb_versions._invalidate()
     return root, store
 
@@ -180,7 +180,7 @@ def test_stale_chunk_of_an_old_version_is_never_retrieved(kbenv, monkeypatch):
     stale = Document(id="stale-1", page_content="HDFC business loan maximum loan amount ₹90 lakh",
                      metadata={"corpus": "urban_money", "source": "HDFC Business Loan Policy.md", "sha": "000000000000",
                                "status": "ACTIVE", "bank": "HDFC Bank"})
-    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt: [(stale, 0.99)])
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: [(stale, 0.99)])
     r = retrieval.retrieve("What is the maximum HDFC business loan amount?", use_llm=False)
     assert "stale-1" not in [c.key for c in r.selected]
     assert next(c for c in r.candidates if c.key == "stale-1").dropped == "not the active version"
@@ -252,13 +252,33 @@ def test_bank_filter_and_evidence_check(kbenv):
     assert all(k in t["candidates"][0] for k in ("vector_score", "keyword_score", "rerank", "score", "dropped"))
 
 
-def test_missing_fact_expands_once_then_reports_not_found(kbenv):
+def test_missing_fact_expands_once_then_reports_not_found(kbenv, monkeypatch):
     root, _ = kbenv
     _write(root, POLICIES)
     kb.sync()
+    monkeypatch.setattr(retrieval, "vector_hits", lambda q, k, lt, banks=None: [])     # works, finds nothing
     r = retrieval.retrieve("What is the processing fee for an HDFC business loan?", use_llm=False)
     assert not r.validation["sufficient"] and [p["pass"] for p in r.passes] == [1, 2]
-    assert "processing fee" in r.validation["reason"]
+    assert "processing fee" in r.validation["reason"] and r.degraded == []
+
+
+def test_a_failed_vector_search_is_retried_and_reported_not_as_missing(kbenv, monkeypatch):
+    from app.rag import vectorstore
+    root, _ = kbenv
+    _write(root, POLICIES)
+    kb.sync()
+    scales = []
+
+    def timing_out(q, k, lt, banks=None):
+        scales.append(vectorstore.timeout_scale.get())
+        vectorstore.note_issue("timeout")
+        return []
+    monkeypatch.setattr(retrieval, "vector_hits", timing_out)
+    r = retrieval.retrieve("What is the processing fee for an HDFC business loan?", use_llm=False)
+    assert [p["pass"] for p in r.passes] == [1, "recovery", 2]
+    assert retrieval.RECOVERY_TIMEOUT_SCALE in scales             # the recovery search waits longer
+    assert r.degraded and r.trace()["degraded"] == r.degraded     # the outage is visible downstream
+    assert vectorstore.issues.get() is None                       # nothing leaks into the next request
 
 
 # ------------------------------------------------------------------ grounding

@@ -183,3 +183,11 @@ def golden_run_detail(rid: int, _=Depends(admin_user)):
     if r is None:
         raise HTTPException(404, "Run not found.")
     return r
+
+
+@router.get("/policy-coverage")
+def policy_coverage(min_rms: int = 1, all_products: bool = False, _=Depends(admin_user)):
+    """Lenders in the RM lists without structured eligibility rules (or with sample / overdue ones): what the
+    credit team needs to add before the app can say why a lender does or does not suit a customer."""
+    from app.rag import lender_eligibility
+    return lender_eligibility.coverage(max(1, min_rms), all_products)
