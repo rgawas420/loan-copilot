@@ -58,6 +58,9 @@ def init_db():
             c.execute("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         if "archived" not in cols:
             c.execute("ALTER TABLE conversations ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+        if "google_sub" not in {r["name"] for r in c.execute("PRAGMA table_info(users)")}:
+            c.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")      # Google account id, once linked
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_google ON users(google_sub) WHERE google_sub IS NOT NULL")
         c.commit()
 
 
@@ -92,9 +95,23 @@ def _check_password(password: str):
         raise AccountError("The password is too long.")
 
 
+# Accounts made with Google have no password: this marker never verifies (verify_password needs salt$hash).
+NO_PASSWORD = "google$"
+
+
 def public_user(row) -> dict:
+    keys = row.keys()
     return {"id": row["id"], "email": row["email"], "name": row["name"], "role": row["role"],
-            "active": bool(row["active"]), "created": row["created"], "last_login": row["last_login"]}
+            "active": bool(row["active"]), "created": row["created"], "last_login": row["last_login"],
+            "google": bool("google_sub" in keys and row["google_sub"]),
+            "has_password": row["password_hash"] != NO_PASSWORD}
+
+
+def _new_role(c, email: str) -> str:
+    """Same rule for every sign-up: listed admin emails and the very first account are admins."""
+    admins = {e.strip().lower() for e in get_settings().admin_emails.split(",") if e.strip()}
+    first = c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+    return "admin" if email in admins or first else "user"
 
 
 # ------------------------------------------------------------------ users
@@ -105,12 +122,10 @@ def register(email: str, name: str, password: str) -> dict:
     if not name or len(name) > 80:
         raise AccountError("Enter your name (up to 80 characters).")
     _check_password(password)
-    admins = {e.strip().lower() for e in get_settings().admin_emails.split(",") if e.strip()}
     with closing(_conn()) as c:
         if c.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
             raise AccountError("An account with this email already exists. Log in instead.")
-        first = c.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
-        role = "admin" if email in admins or first else "user"
+        role = _new_role(c, email)
         cur = c.execute("INSERT INTO users(email,name,password_hash,role,active,created) VALUES (?,?,?,?,1,?)",
                         (email, name, hash_password(password), role, _now()))
         c.commit()
@@ -133,6 +148,37 @@ def authenticate(email: str, password: str) -> dict:
     return public_user(row)
 
 
+def google_login(sub: str, email: str, name: str, allow_new: bool) -> tuple:
+    """(user, created) for a verified Google identity (app/services/google_auth.py). The account is found by its
+    Google id; else the account with the same (Google-verified) email gets linked to it, keeping its password,
+    chats and role; else, when sign-up is open, a new account without a password is made."""
+    email = email.strip().lower()
+    with closing(_conn()) as c:
+        row = c.execute("SELECT * FROM users WHERE google_sub=?", (sub,)).fetchone()
+        created = False
+        if row is None:
+            row = c.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            if row is not None:
+                if row["google_sub"] and row["google_sub"] != sub:
+                    raise AccountError("This email is linked to a different Google account.")
+                c.execute("UPDATE users SET google_sub=? WHERE id=?", (sub, row["id"]))
+            elif not allow_new:
+                raise AccountError("Sign-up is closed. Ask an administrator for an account.")
+            elif not EMAIL_RE.match(email) or len(email) > 200:
+                raise AccountError("This Google account's email address can't be used.")
+            else:
+                cur = c.execute("INSERT INTO users(email,name,password_hash,role,active,created,google_sub) "
+                                "VALUES (?,?,?,?,1,?,?)",
+                                (email, (name or email.split("@")[0])[:80], NO_PASSWORD, _new_role(c, email), _now(), sub))
+                created = True
+                row = c.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
+            c.commit()
+            row = c.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
+    if not row["active"]:
+        raise AccountError("This account is disabled. Contact your administrator.")
+    return public_user(row), created
+
+
 def get_user(user_id: int):
     with closing(_conn()) as c:
         row = c.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
@@ -142,6 +188,8 @@ def get_user(user_id: int):
 def change_password(user_id: int, current: str, new: str):
     with closing(_conn()) as c:
         row = c.execute("SELECT password_hash FROM users WHERE id=?", (user_id,)).fetchone()
+        if row is not None and row["password_hash"] == NO_PASSWORD:
+            raise AccountError("This account signs in with Google and has no password. Ask an administrator to set one.")
         if row is None or not verify_password(current, row["password_hash"]):
             raise AccountError("The current password is incorrect.")
         _check_password(new)

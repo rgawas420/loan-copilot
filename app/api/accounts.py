@@ -23,6 +23,10 @@ class LoginIn(BaseModel):
     password: str = Field(max_length=200)
 
 
+class GoogleIn(BaseModel):
+    credential: str = Field(min_length=20, max_length=4096)     # the ID token from Google's sign-in button
+
+
 class PasswordIn(BaseModel):
     current: str = Field(max_length=200)
     new: str = Field(max_length=200)
@@ -85,6 +89,25 @@ def login(body: LoginIn, response: Response):
     return {"user": user}
 
 
+@router.post("/auth/google", dependencies=[Depends(auth_rate_limited)])
+def google_login(body: GoogleIn, response: Response):
+    """Sign in (or, when sign-up is open, register) with a Google account: the same users, sessions and roles as
+    an email / password login (app/services/google_auth.py)."""
+    from app.services import google_auth
+    if not google_auth.enabled():
+        raise HTTPException(404, "Google sign-in is not set up.")
+    try:
+        g = google_auth.verify(body.credential)
+        user, created = accounts.google_login(g.sub, g.email, g.name, get_settings().allow_registration)
+    except google_auth.GoogleAuthError as e:
+        raise HTTPException(401, str(e))
+    except accounts.AccountError as e:
+        raise HTTPException(403, str(e))
+    _set_session(response, user["id"])
+    accounts.log(user["id"], "register" if created else "login", "google" + (f", role={user['role']}" if created else ""))
+    return {"user": user, "created": created}
+
+
 @router.post("/auth/logout")
 def logout(response: Response, um_session: str | None = Cookie(default=None)):
     user = accounts.session_user(um_session)
@@ -102,7 +125,8 @@ def me(user=Depends(current_user)):
 
 @router.get("/auth/config")
 def auth_config():
-    return {"allow_registration": get_settings().allow_registration}
+    s = get_settings()
+    return {"allow_registration": s.allow_registration, "google_client_id": s.google_client_id or None}
 
 
 @router.post("/auth/password")

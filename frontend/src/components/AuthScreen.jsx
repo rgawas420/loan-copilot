@@ -1,14 +1,68 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
+
+const GSI_SRC = "https://accounts.google.com/gsi/client";
+let gsiLoading = null;
+
+/** Google Identity Services, loaded once and only when Google sign-in is set up. */
+function loadGsi() {
+  if (window.google?.accounts?.id) return Promise.resolve(window.google);
+  gsiLoading = gsiLoading || new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = GSI_SRC; s.async = true; s.defer = true;
+    s.onload = () => resolve(window.google);
+    s.onerror = () => { gsiLoading = null; reject(new Error("Google sign-in could not be loaded.")); };
+    document.head.appendChild(s);
+  });
+  return gsiLoading;
+}
+
+/** Google's own "Continue with Google" button (its branding rules require Google's rendering). The ID token it
+ *  returns goes to /api/auth/google, which signs in to the same account system as the form below. */
+function GoogleButton({ clientId, register, disabled, onCredential, onError }) {
+  const box = useRef(null);
+  const latest = useRef(onCredential);
+  latest.current = onCredential;
+  useEffect(() => {
+    let live = true;
+    loadGsi().then((google) => {
+      if (!live || !box.current) return;
+      google.accounts.id.initialize({ client_id: clientId, callback: (r) => latest.current(r.credential),
+                                      ux_mode: "popup", cancel_on_tap_outside: true });
+      const dark = window.matchMedia?.("(prefers-color-scheme: dark)").matches
+        && document.documentElement.dataset.theme !== "light";
+      box.current.innerHTML = "";
+      google.accounts.id.renderButton(box.current, {
+        type: "standard", size: "large", shape: "pill", logo_alignment: "center",
+        theme: dark ? "filled_black" : "outline", text: register ? "signup_with" : "continue_with",
+        width: Math.min(380, box.current.offsetWidth || 380),
+      });
+    }).catch((e) => live && onError(e.message));
+    return () => { live = false; };
+  }, [clientId, register, onError]);
+  return <div ref={box} className={`google-btn${disabled ? " busy" : ""}`} aria-busy={disabled || undefined} />;
+}
 
 export default function AuthScreen({ onAuthed }) {
   const [mode, setMode] = useState("login");
   const [allowRegister, setAllowRegister] = useState(true);
+  const [googleId, setGoogleId] = useState(null);
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { api.authConfig().then((c) => setAllowRegister(c.allow_registration)).catch(() => {}); }, []);
+  useEffect(() => {
+    api.authConfig().then((c) => { setAllowRegister(c.allow_registration); setGoogleId(c.google_client_id || null); })
+      .catch(() => {});
+  }, []);
+
+  async function google(credential) {
+    setError("");
+    setBusy(true);
+    try { onAuthed((await api.googleLogin(credential)).user); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const register = mode === "register";
@@ -34,6 +88,12 @@ export default function AuthScreen({ onAuthed }) {
         <span className="logo lg" aria-hidden="true">₹</span>
         <h1>{register ? "Create your account" : "Welcome back"}</h1>
         <p className="auth-sub">Urban Money Loan Copilot</p>
+        {googleId && (
+          <>
+            <GoogleButton clientId={googleId} register={register} disabled={busy} onCredential={google} onError={setError} />
+            <p className="auth-or" aria-hidden="true"><span>or</span></p>
+          </>
+        )}
         <form onSubmit={submit} noValidate>
           {register && (
             <label className="field">

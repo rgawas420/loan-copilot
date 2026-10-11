@@ -26,6 +26,7 @@ pyxlsb>=1.0
 pymupdf>=1.24
 rapidocr-onnxruntime>=1.3
 python-dotenv>=1.0
+google-auth[requests]>=2.30         # Google Sign-In: ID token verification
 
 # tests
 pytest>=8.0

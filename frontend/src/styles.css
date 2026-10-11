@@ -99,6 +99,10 @@ h1,h2,h3,h4{line-height:1.3}
 .form-ok{min-height:1.4em;color:var(--accent);font-size:.9rem;margin:4px 0 10px}
 .auth .btn-primary{min-height:50px;font-size:1rem}
 .auth-switch{margin-top:20px;font-size:.92rem}
+.google-btn{display:flex;justify-content:center;min-height:44px;margin-top:24px}
+.google-btn.busy{opacity:.6;pointer-events:none}
+.auth-or{display:flex;align-items:center;gap:12px;margin:18px 0 2px;color:var(--muted);font-size:.85rem}
+.auth-or::before,.auth-or::after{content:"";flex:1;border-top:1px solid var(--line)}
 .auth-foot{margin-top:40px;color:var(--faint);font-size:.82rem;text-align:center;max-width:420px}
 
 /* ---------- app shell ---------- */

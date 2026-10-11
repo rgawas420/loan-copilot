@@ -47,6 +47,7 @@ export const api = {
   me: () => request("/api/auth/me"),
   authConfig: () => request("/api/auth/config"),
   login: (email, password) => request("/api/auth/login", { body: { email, password } }),
+  googleLogin: (credential) => request("/api/auth/google", { body: { credential } }),
   register: (email, name, password) => request("/api/auth/register", { body: { email, name, password } }),
   logout: () => request("/api/auth/logout", { method: "POST" }),
   changePassword: (current, next) => request("/api/auth/password", { body: { current, new: next } }),

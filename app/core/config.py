@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     # User accounts (the chat app). The first account ever registered, and any email listed here, becomes admin.
     admin_emails: str = ""                               # comma-separated
     allow_registration: bool = True                      # false = only admins can create accounts
+    # Google Sign-In: the OAuth client id (Web application) from Google Cloud Console; empty = no Google button.
+    # Not a secret: the browser needs it too. Its "Authorized JavaScript origins" must list the app's URL.
+    google_client_id: str = ""
     session_days: int = 7                                # login cookie lifetime
     auth_rate_limit_per_min: int = 10                    # per client IP, on login and register
     max_conversation_kb: int = 2048                      # largest saved conversation
